@@ -1,0 +1,721 @@
+pub mod download_utils;
+pub mod versions;
+pub mod profile_manager;
+pub mod options;
+
+use std::{
+  path::{ PathBuf, MAIN_SEPARATOR_STR },
+  fs::{ self, create_dir_all, File },
+  env::consts::ARCH,
+  process::Command,
+  collections::{ HashMap, HashSet },
+  ops::Deref,
+  io::{ self, Write },
+};
+
+use chrono::{ Utc, Timelike };
+use download_utils::{ ProxyOptions, download_job::DownloadJob };
+use log::{ info, error, debug, warn };
+use options::{ GameOptions, MinecraftFeatureMatcher };
+use os_info::Type::Windows;
+use regex::Regex;
+use serde_json::json;
+use thiserror::Error;
+use versions::{
+  VersionManager,
+  json::{ rule::{ FeatureMatcher, RuleFeatureType, OperatingSystem }, LocalVersionInfo, AssetIndex },
+  info::VersionInfo,
+};
+use zip::ZipArchive;
+
+use crate::versions::json::{ ArgumentType, library::ExtractRules, Sha1Sum };
+
+#[derive(Error, Debug)]
+#[error("{0}")]
+pub struct MinecraftLauncherError(String);
+
+const DEFAULT_JRE_ARGUMENTS_32BIT: &str =
+  "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M";
+const DEFAULT_JRE_ARGUMENTS_64BIT: &str =
+  "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M";
+
+pub struct MinecraftGameRunner {
+  options: GameOptions,
+  feature_matcher: Box<MinecraftFeatureMatcher>,
+  version_manager: VersionManager,
+  local_version: Option<LocalVersionInfo>,
+
+  natives_dir: Option<PathBuf>,
+  virtual_dir: Option<PathBuf>,
+}
+
+impl MinecraftGameRunner {
+  pub fn new(options: GameOptions) -> Self {
+    let feature_matcher = Box::new(MinecraftFeatureMatcher(false, options.resolution.clone()));
+    let version_manager = VersionManager::new(options.game_dir.clone(), feature_matcher.clone());
+
+    Self {
+      options,
+      feature_matcher,
+      version_manager,
+
+      local_version: None,
+      natives_dir: None,
+      virtual_dir: None,
+    }
+  }
+
+  fn get_local_version(&self) -> &LocalVersionInfo {
+    self.local_version.as_ref().unwrap()
+  }
+
+  fn get_virtual_dir(&self) -> &PathBuf {
+    &self.virtual_dir.as_ref().unwrap()
+  }
+
+  fn get_natives_dir(&self) -> &PathBuf {
+    &self.natives_dir.as_ref().unwrap()
+  }
+
+  fn get_version_dir(&self) -> PathBuf {
+    self.options.game_dir.join("versions").join(&self.options.version.to_string())
+  }
+
+  fn get_assets_dir(&self) -> PathBuf {
+    self.options.game_dir.join("assets")
+  }
+
+  fn get_asset_index(&self) -> Option<AssetIndex> {
+    let asset_index_id = &self.get_local_version().asset_index.as_ref()?.id;
+    let asset_index_json_path = self.get_assets_dir().join("indexes").join(format!("{}.json", asset_index_id));
+
+    let file = &mut File::open(asset_index_json_path).ok()?;
+    Some(serde_json::from_reader(file).ok()?)
+  }
+
+  fn is_win_ten(&self) -> bool {
+    let os = os_info::get();
+    os.os_type() == Windows && os.edition().is_some_and(|edition| edition.contains("Windows 10"))
+  }
+}
+
+impl MinecraftGameRunner {
+  pub async fn launch(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
+    self.version_manager.refresh().await?;
+    info!("Queuing library & version downloads");
+
+    let mut local_version = match self.version_manager.get_local_version(&self.options.version) {
+      Some(local_version) => local_version,
+      None => { self.version_manager.install_version(&self.options.version).await? }
+    };
+
+    if !local_version.applies_to_current_environment(self.feature_matcher.deref()) {
+      return Err(
+        MinecraftLauncherError(format!("Version {} is is incompatible with the current environment", self.options.version.to_string())).into()
+      );
+    }
+
+    if !self.version_manager.is_up_to_date(&local_version).await {
+      local_version = self.version_manager.install_version(&self.options.version).await?;
+    }
+
+    local_version = local_version.resolve(&self.version_manager, HashSet::new()).await?;
+
+    // TODO: self.migrate_old_assets()
+    self.download_required_files(&local_version).await?;
+
+    self.local_version = Some(local_version);
+    self.launch_game().await?;
+    Ok(())
+  }
+
+  async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
+    let mut job1 = DownloadJob::new("Version & Libraries", false);
+    self.version_manager.download_version(&self, local_version, &mut job1)?;
+
+    let job2 = DownloadJob::new("Resources", false);
+    job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
+
+    job1.start().await?;
+    job2.start().await?;
+    Ok(())
+  }
+
+  async fn launch_game(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Launching game");
+
+    let natives_dir = self.get_version_dir().join(format!("{}-natives-{}", self.options.version.to_string(), Utc::now().nanosecond()));
+    if !natives_dir.is_dir() {
+      fs::create_dir_all(&natives_dir)?;
+    }
+
+    info!("Unpacking natives to {}", natives_dir.display());
+
+    if let Err(err) = self.unpack_natives(&natives_dir) {
+      error!("Couldn't unpack natives! {err}");
+      Err(MinecraftLauncherError(format!("Couldn't unpack natives! {err}")))?;
+    }
+
+    let virtual_dir = self.reconstruct_assets();
+    if let Err(err) = &virtual_dir {
+      error!("Couldn't unpack natives! {err}");
+      Err(MinecraftLauncherError(format!("Couldn't unpack natives! {err}")))?;
+    }
+    self.virtual_dir = virtual_dir.ok();
+
+    self.natives_dir = Some(natives_dir);
+
+    let game_dir = &self.options.game_dir;
+    info!("Launching in {}", game_dir.display());
+    if !game_dir.exists() {
+      if let Err(_) = fs::create_dir_all(&game_dir) {
+        error!("Aborting launch; couldn't create game directory");
+        Err(MinecraftLauncherError("Aborting launch; couldn't create game directory".to_string()))?;
+      }
+    } else if !game_dir.is_dir() {
+      error!("Aborting launch; game directory is not actually a directory");
+      Err(MinecraftLauncherError("Aborting launch; game directory is not actually a directory".to_string()))?;
+    }
+
+    let server_resource_packs_dir = game_dir.join("server-resource-packs");
+    create_dir_all(&server_resource_packs_dir)?;
+
+    let mut game_process_builder = GameProcessBuilder::new();
+    game_process_builder.directory(game_dir);
+
+    if let Some(jvm_args) = &self.options.jvm_args {
+      game_process_builder.with_arguments(jvm_args.clone());
+    } else {
+      let args = if ARCH == "x86_64" { DEFAULT_JRE_ARGUMENTS_64BIT } else { DEFAULT_JRE_ARGUMENTS_32BIT };
+      game_process_builder.with_arguments(
+        args
+          .split(" ")
+          .map(|s| s.to_string())
+          .collect()
+      );
+    }
+
+    let substitutor = self.create_arguments_substitutor();
+
+    // Add JVM args
+    let local_version = self.local_version.as_ref().unwrap();
+    if !local_version.arguments.is_empty() {
+      if let Some(arguments) = local_version.arguments.get(&ArgumentType::Jvm) {
+        game_process_builder.with_arguments(
+          arguments
+            .iter()
+            .map(|v| v.apply(self.feature_matcher.deref()))
+            .flatten()
+            .flatten()
+            .cloned()
+            .map(&substitutor)
+            .collect::<Vec<_>>()
+        );
+      }
+    } else if let Some(_) = &local_version.minecraft_arguments {
+      if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
+        game_process_builder.with_argument("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump");
+        if self.is_win_ten() {
+          game_process_builder.with_arguments(vec!["-Dos.name=Windows 10", "-Dos.version=10.0"]);
+        }
+      } else if OperatingSystem::get_current_platform() == OperatingSystem::Osx {
+        game_process_builder.with_arguments(vec![&substitutor("-Xdock:icon=${asset=icons/minecraft.icns}".to_string()), "-Xdock:name=Minecraft"]);
+      }
+
+      game_process_builder.with_argument(&substitutor("-Djava.library.path=${natives_directory}".to_string()));
+      game_process_builder.with_argument(&substitutor("-Dminecraft.launcher.brand=${launcher_name}".to_string()));
+      game_process_builder.with_argument(&substitutor("-Dminecraft.launcher.version=${launcher_version}".to_string()));
+      game_process_builder.with_argument(&substitutor("-Dminecraft.client.jar=${primary_jar}".to_string()));
+      game_process_builder.with_arguments(vec!["-cp".to_string(), substitutor("${classpath}".to_string())]);
+    }
+
+    game_process_builder.with_argument(&local_version.get_main_class());
+    info!("Half command: {}", game_process_builder.get_full_command().join(" "));
+    if !local_version.arguments.is_empty() {
+      if let Some(arguments) = local_version.arguments.get(&ArgumentType::Game) {
+        game_process_builder.with_arguments(
+          arguments
+            .iter()
+            .map(|v| v.apply(self.feature_matcher.deref()))
+            .flatten()
+            .flatten()
+            .cloned()
+            .map(&substitutor)
+            .collect::<Vec<_>>()
+        );
+      }
+    } else if let Some(minecraft_arguments) = &local_version.minecraft_arguments {
+      game_process_builder.with_arguments(
+        minecraft_arguments
+          .split(" ")
+          .map(|s| s.to_string())
+          .map(&substitutor)
+          .collect::<Vec<_>>()
+      );
+
+      if self.feature_matcher.has_feature(&RuleFeatureType::IsDemoUser, &json!(true)) {
+        game_process_builder.with_argument("--demo");
+      }
+
+      if self.feature_matcher.has_feature(&RuleFeatureType::HasCustomResolution, &json!(true)) {
+        game_process_builder.with_arguments(
+          vec![
+            "--width".to_string(),
+            substitutor("${resolution_width}".to_string()),
+            "--height".to_string(),
+            substitutor("${resolution_height}".to_string())
+          ]
+        );
+      }
+    }
+
+    // TODO: get proxy auth?
+    if let ProxyOptions::Proxy(url) = &self.options.proxy {
+      game_process_builder.with_arguments(vec!["--proxyHost".to_string(), url.host_str().unwrap().to_string()]);
+      game_process_builder.with_arguments(vec!["--proxyPort".to_string(), url.port().unwrap().to_string()]);
+
+      if !url.username().is_empty() {
+        game_process_builder.with_arguments(vec!["--proxyUser".to_string(), url.username().to_string()]);
+      }
+
+      if let Some(passowrd) = url.password() {
+        game_process_builder.with_arguments(vec!["--proxyPass".to_string(), passowrd.to_string()]);
+      }
+    }
+
+    info!("Running java {}", game_process_builder.get_full_command().join(" "));
+
+    let regex = Regex::new(r"\$\{.+\}")?;
+    game_process_builder
+      .get_full_command()
+      .iter()
+      .filter_map(|arg| regex.find(arg))
+      .for_each(|arg| debug!("Unresolved variable - {:?}", arg.as_str()));
+
+    let mut args = game_process_builder.get_full_command();
+    if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
+      args = args
+        .into_iter()
+        .map(|arg| arg.replace("\"", "\\\""))
+        .collect();
+    }
+
+    let mut child = Command::new(&self.options.java_path) // TODO: build GameProcessBuilder
+      .current_dir(&self.options.game_dir)
+      .args(args)
+      .spawn()?;
+
+    self.perform_cleanups()?;
+
+    let status = child.wait()?;
+    if status.success() {
+      Ok(())
+    } else {
+      Err(Box::new(MinecraftLauncherError("Failed to launch game".to_string())))
+    }
+  }
+
+  fn perform_cleanups(&self) -> Result<(), Box<dyn std::error::Error>> {
+    // this.cleanupOrphanedVersions();
+    // this.cleanupOrphanedAssets();
+    // this.cleanupOldSkins();
+    self.cleanup_old_natives()?;
+    // this.cleanupOldVirtuals();
+    Ok(())
+  }
+
+  fn cleanup_old_natives(&self) -> Result<(), Box<dyn std::error::Error>> {
+    let game_dir = &self.version_manager.game_dir;
+    for local_ver in self.version_manager.get_local_versions() {
+      let version_id = local_ver.get_id().to_string();
+      let version_dir = game_dir.join("versions").join(&version_id);
+      let dir_names: Vec<String> = fs
+        ::read_dir(&version_dir)?
+        .filter_map(|file| file.ok())
+        .filter(|file| file.file_type().unwrap().is_dir())
+        .map(|file| file.file_name().to_str().unwrap().to_string())
+        .collect();
+      let time = Utc::now().timestamp_millis() as u128;
+      let regex = Regex::new(format!("{}-natives-(\\d+)", version_id).as_str())?;
+      for dir_name in dir_names {
+        let captures = regex.captures(&dir_name);
+        if let Some(captures) = captures {
+          let native_dir = version_dir.join(&dir_name);
+          let native_time = captures.get(1).unwrap().as_str().parse::<u128>()?;
+          if time - native_time > 3600000 {
+            debug!("Deleting {}", native_dir.display());
+            fs::remove_dir_all(&native_dir)?;
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  fn unpack_natives(&self, natives_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let os = OperatingSystem::get_current_platform();
+    let libs = self.local_version.as_ref().unwrap().get_relevant_libraries(self.feature_matcher.deref());
+
+    fn unpack_native(
+      natives_dir: &PathBuf,
+      mut zip_archive: ZipArchive<File>,
+      extract_rules: Option<&ExtractRules>
+    ) -> Result<(), Box<dyn std::error::Error>> {
+      for i in 0..zip_archive.len() {
+        let mut file = zip_archive.by_index(i).unwrap();
+        let file_zip_path = file.enclosed_name().unwrap().to_owned();
+        if let Some(extract_rules) = extract_rules {
+          if !extract_rules.should_extract(&file_zip_path) {
+            continue;
+          }
+        }
+
+        let output_file = natives_dir.join(file_zip_path);
+        create_dir_all(output_file.parent().unwrap())?;
+        if file.is_dir() {
+          continue;
+        }
+
+        let mut output_file = File::create(output_file)?;
+        io::copy(&mut file, &mut output_file)?;
+      }
+      Ok(())
+    }
+
+    for lib in libs {
+      let natives = &lib.natives;
+      if let Some(native_id) = natives.get(&os) {
+        let file = &self.options.game_dir.join("libraries").join(lib.get_artifact_path(Some(native_id)).replace("/", MAIN_SEPARATOR_STR));
+
+        let zip_file = ZipArchive::new(File::open(file)?)?;
+        let extract_rules = lib.extract.as_ref();
+        let _ = unpack_native(natives_dir, zip_file, extract_rules); // Ignore errors
+      }
+    }
+
+    Ok(())
+  }
+
+  fn reconstruct_assets(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let assets_dir = self.options.game_dir.join("assets"); //self.assets_dir;
+    let indexes_dir = assets_dir.join("indexes");
+    let objects_dir = assets_dir.join("objects");
+    let asset_index_id = &self.get_local_version().asset_index.as_ref().unwrap().id;
+    let asset_index_file = indexes_dir.join(format!("{}.json", asset_index_id));
+    let mut virtual_dir = assets_dir.join("virtual").join(asset_index_id);
+
+    if !asset_index_file.is_file() {
+      warn!("No assets index file {}; can't reconstruct assets", virtual_dir.display());
+      return Ok(virtual_dir);
+    } else {
+      let asset_index: AssetIndex = serde_json::from_reader(File::open(asset_index_file)?)?;
+      if asset_index.map_to_resources {
+        virtual_dir = self.options.game_dir.join("resources");
+      }
+
+      if asset_index.is_virtual || asset_index.map_to_resources {
+        info!("Reconstructing virtual assets folder at {}", virtual_dir.display());
+
+        for asset_obj_entry in asset_index.get_file_map() {
+          let asset_file = virtual_dir.join(asset_obj_entry.0);
+          let object_file = objects_dir.join(&asset_obj_entry.1.hash.to_string()[0..2]).join(asset_obj_entry.1.hash.to_string());
+
+          let mut should_copy = true;
+          if asset_file.is_file() {
+            let hash = Sha1Sum::from_reader(&mut File::open(&asset_file)?)?;
+            if hash != asset_obj_entry.1.hash {
+              should_copy = true;
+            }
+          }
+
+          if should_copy {
+            info!("Copying asset for virtual or resource-mapped: {}", asset_file.display());
+            fs::copy(object_file, asset_file)?;
+          }
+        }
+
+        let mut last_used_file = File::create(virtual_dir.join(".lastused"))?;
+        last_used_file.write_all(&Utc::now().to_rfc3339().as_bytes())?;
+      }
+    }
+
+    Ok(virtual_dir)
+  }
+
+  fn create_arguments_substitutor(&self) -> impl Fn(String) -> String {
+    let mut substitutor = ArgumentSubstitutorBuilder::new();
+
+    let classpath_separator = if OperatingSystem::get_current_platform() == OperatingSystem::Windows { ";" } else { ":" };
+    let version_id = self.options.version.to_string();
+    let local_version = self.get_local_version();
+    let game_dir = &self.options.game_dir;
+
+    let classpath = self.construct_classpath(self.local_version.as_ref().unwrap()).unwrap();
+    let assets_dir = self.get_assets_dir();
+    let libraries_dir = game_dir.join("libraries");
+    let natives_dir = self.get_natives_dir();
+    let virtual_dir = self.get_virtual_dir();
+
+    let launcher_opts = self.options.launcher_options.as_ref();
+
+    let jar_id = local_version.get_jar().to_string();
+    let jar_path = game_dir.join("versions").join(&jar_id).join(format!("{}.jar", &jar_id));
+
+    let asset_index_substitutions = {
+      let mut map = HashMap::new();
+
+      if let Some(asset_index) = self.get_asset_index() {
+        for (asset_name, asset) in asset_index.get_file_map() {
+          let hash = asset.hash.to_string();
+          let asset_path = assets_dir
+            .join("objects")
+            .join(&hash[0..2])
+            .join(hash)
+            .to_str()
+            .unwrap()
+            .to_string();
+          map.insert(format!("asset={asset_name}"), asset_path);
+        }
+      }
+
+      map
+    };
+
+    substitutor
+      .add("auth_access_token", self.options.authentication.get_authenticated_token())
+      .add("auth_session", self.options.authentication.get_auth_session())
+
+      .add("auth_player_name", self.options.authentication.auth_player_name())
+      .add("auth_uuid", self.options.authentication.auth_uuid().to_string())
+      .add("user_type", self.options.authentication.user_type());
+
+    substitutor
+      .add("profile_name", "")
+      .add("version_name", &version_id)
+      .add("game_directory", game_dir.to_str().unwrap())
+      .add("game_assets", virtual_dir.to_str().unwrap())
+      .add("assets_root", assets_dir.to_str().unwrap())
+      .add("assets_index_name", &local_version.asset_index.as_ref().unwrap().id)
+      .add("version_type", &local_version.get_type().get_name());
+
+    if let Some(resolution) = self.options.resolution.as_ref() {
+      substitutor.add("resolution_width", &resolution.width().to_string());
+      substitutor.add("resolution_height", &resolution.height().to_string());
+    } else {
+      substitutor.add("resolution_width", "");
+      substitutor.add("resolution_height", "");
+    }
+
+    substitutor.add("language", "en-us").add_all(asset_index_substitutions);
+
+    if let Some(launcher_opts) = launcher_opts {
+      substitutor.add("launcher_name", &launcher_opts.launcher_name).add("launcher_version", &launcher_opts.launcher_version);
+    } else {
+      substitutor.add("launcher_name", "").add("launcher_version", "");
+    }
+
+    substitutor
+      .add("natives_directory", natives_dir.to_str().unwrap())
+
+      .add("classpath", &classpath)
+      .add("classpath_separator", classpath_separator)
+      .add("primary_jar", jar_path.to_str().unwrap());
+
+    substitutor
+      .add("clientid", "") // TODO: figure out
+      .add("auth_xuid", ""); // TODO: only for msa
+
+    substitutor.add("library_directory", &libraries_dir.to_str().unwrap()); // Forge compatibility
+
+    substitutor.add_all(self.options.authentication.get_extra_substitutors());
+    substitutor.add_all(self.options.substitutor_overrides.clone()); // Override if needed
+
+    substitutor.build()
+  }
+
+  fn construct_classpath(&self, local_version: &LocalVersionInfo) -> Result<String, MinecraftLauncherError> {
+    let os = OperatingSystem::get_current_platform();
+    let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
+    let classpath = local_version.get_classpath(&os, &self.options.game_dir, self.feature_matcher.deref());
+    for path in &classpath {
+      if !path.is_file() {
+        return Err(MinecraftLauncherError(format!("Classpath file not found: {}", path.display())));
+      }
+    }
+    Ok(
+      classpath
+        .iter()
+        .map(|s| s.to_str().unwrap().to_string())
+        .collect::<Vec<_>>()
+        .join(separator)
+    )
+  }
+}
+
+pub struct ArgumentSubstitutorBuilder {
+  map: HashMap<String, String>,
+}
+
+impl ArgumentSubstitutorBuilder {
+  pub fn new() -> Self {
+    Self { map: HashMap::new() }
+  }
+
+  pub fn add(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> &mut Self {
+    self.map.insert(key.as_ref().to_string(), value.as_ref().to_string());
+    self
+  }
+
+  pub fn add_all(&mut self, map: HashMap<impl AsRef<str>, impl AsRef<str>>) -> &mut Self {
+    for (key, value) in map {
+      self.add(key, value);
+    }
+    self
+  }
+
+  pub fn build(self) -> impl Fn(String) -> String {
+    move |input| {
+      let mut output = input;
+      for (key, value) in &self.map {
+        output = output.replace(&format!("${{{}}}", key.to_string()), &value);
+      }
+      output
+    }
+  }
+}
+
+pub struct GameProcessBuilder {
+  arguments: Vec<String>,
+  directory: Option<PathBuf>,
+}
+
+impl GameProcessBuilder {
+  pub fn new() -> Self {
+    Self {
+      arguments: vec![],
+      directory: None,
+    }
+  }
+
+  pub fn get_full_command(&self) -> Vec<String> {
+    self.arguments.clone()
+  }
+
+  pub fn with_argument(&mut self, argument: impl AsRef<str>) -> &mut Self {
+    self.arguments.push(argument.as_ref().to_string());
+    self
+  }
+
+  pub fn with_arguments(&mut self, arguments: Vec<impl AsRef<str>>) -> &mut Self {
+    self.arguments.extend(arguments.iter().map(|s| s.as_ref().to_string()));
+    self
+  }
+
+  pub fn directory(&mut self, directory: &PathBuf) -> &mut Self {
+    self.directory = Some(directory.clone());
+    self
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::{ profile_manager::auth::OfflineUserAuthentication, options::{ LauncherOptions, GameOptionsBuilder }, versions::info::MCVersion };
+
+  use super::*;
+  use std::{ env::temp_dir, sync::{ Arc, Mutex } };
+  use log::{ info, trace, LevelFilter };
+  use log4rs::{
+    config::{ Appender, Root, Logger },
+    append::{
+      console::ConsoleAppender,
+      rolling_file::{ RollingFileAppender, policy::compound::{ CompoundPolicy, trigger::Trigger, roll::fixed_window::FixedWindowRoller } },
+    },
+    encode::pattern::PatternEncoder,
+    Config,
+  };
+  use uuid::Uuid;
+
+  #[derive(Debug)]
+  struct StartupTrigger {
+    ran: Mutex<bool>,
+  }
+
+  impl StartupTrigger {
+    fn new() -> Self {
+      Self {
+        ran: Mutex::new(false),
+      }
+    }
+  }
+
+  impl Trigger for StartupTrigger {
+    fn trigger(&self, file: &log4rs::append::rolling_file::LogFile) -> anyhow::Result<bool> {
+      if *self.ran.lock().unwrap() {
+        return Ok(false);
+      } else {
+        *self.ran.lock().unwrap() = true;
+        Ok(file.len_estimate() > 0)
+      }
+    }
+  }
+
+  #[tokio::test]
+  async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = ConsoleAppender::builder()
+      .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}")))
+      .build();
+    let mclc_stdout = ConsoleAppender::builder()
+      .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)} {l}]: {m}{n}")))
+      .build();
+
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+
+    let mclc_rolling_file = RollingFileAppender::builder()
+      .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}")))
+      .build(
+        "log/latest.log",
+        Box::new(
+          CompoundPolicy::new(
+            Box::new(StartupTrigger::new()),
+            // Box::new(SizeTrigger::new(10 * 1024 * 1024)), // 10 MB
+            Box::new(FixedWindowRoller::builder().build(&format!("log/{date}-{{}}.log.gz"), 3).unwrap())
+          )
+        )
+      )?;
+
+    let minecraft_launcher_core = Logger::builder()
+      .appender("mclc_stdout")
+      .appender("mclc_rolling_file")
+      .additive(false)
+      .build("minecraft_launcher_core", LevelFilter::Debug);
+
+    let config = Config::builder()
+      .appender(Appender::builder().build("stdout", Box::new(stdout)))
+      .appender(Appender::builder().build("mclc_stdout", Box::new(mclc_stdout)))
+      .appender(Appender::builder().build("mclc_rolling_file", Box::new(mclc_rolling_file)))
+      .logger(minecraft_launcher_core)
+      .build(Root::builder().appender("stdout").build(LevelFilter::Debug))?;
+
+    log4rs::init_config(config).unwrap();
+
+    trace!("Commencing testing game");
+
+    let game_dir = temp_dir().join(".minecraft-core-test");
+    info!("Game dir: {game_dir:?}");
+
+    info!("Attempting to launch the game");
+
+    let game_options = GameOptionsBuilder::default()
+      .version(MCVersion::new("1.20.1-forge-47.2.0"))
+      .game_dir(game_dir)
+      .proxy(ProxyOptions::NoProxy)
+      .java_path(PathBuf::from("C:/Program Files/Eclipse Adoptium/jdk-17.0.6.10-hotspot/bin/java.exe"))
+      .authentication(Arc::new(OfflineUserAuthentication { username: "MonkeyKiller_".to_string(), uuid: Uuid::nil() }))
+      .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
+      .build()?;
+    let mut game_runner = MinecraftGameRunner::new(game_options);
+    game_runner.launch().await.unwrap();
+    Ok(())
+  }
+}
