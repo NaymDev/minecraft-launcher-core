@@ -9,7 +9,7 @@ use uuid::Uuid;
 #[error("{0}")]
 pub struct MinecraftAuthenticationError(String);
 
-pub trait UserAuthentication: Debug {
+pub trait UserAuthentication: Send + Debug {
   fn get_authenticated_token(&self) -> String;
   // TODO: fn get_user_properties(&self);
   // TODO: fn get_user_property_map(&self);
