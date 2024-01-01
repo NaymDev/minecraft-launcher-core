@@ -47,7 +47,7 @@ pub struct GameOptions {
   #[builder(default)]
   pub resolution: Option<MinecraftResolution>,
   pub java_path: PathBuf,
-  pub authentication: Arc<dyn UserAuthentication>,
+  pub authentication: Arc<dyn UserAuthentication + Send + Sync>,
   #[builder(default)]
   pub launcher_options: Option<LauncherOptions>,
   #[builder(default)]
