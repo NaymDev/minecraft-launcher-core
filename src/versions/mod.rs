@@ -6,7 +6,8 @@ use std::{
   fs::{ read_dir, File, create_dir_all, self },
   collections::HashSet,
   sync::{ Mutex, Arc },
-  io::Cursor, ops::Deref,
+  io::Cursor,
+  ops::Deref,
 };
 
 use log::{ info, warn, error };
@@ -42,50 +43,56 @@ impl VersionManager {
   }
 
   pub fn get_local_versions(&self) -> Vec<LocalVersionInfo> {
-    self.local_versions_cache.lock().unwrap().to_vec()
+    let mutex_guard = self.local_versions_cache.lock().unwrap();
+    mutex_guard.to_vec()
   }
 
   pub fn get_remote_versions(&self) -> Vec<RemoteVersionInfo> {
-    self.remote_versions_cache.lock().unwrap().to_vec()
+    let mutex_guard = self.remote_versions_cache.lock().unwrap();
+    mutex_guard.to_vec()
   }
 
   pub async fn refresh(&self) -> Result<(), Box<dyn std::error::Error>> {
+    // Clear cache
+    // let mut remote_versions_cache = self.remote_versions_cache.lock().unwrap();
+    // let mut local_versions_cache = self.local_versions_cache.lock().unwrap();
+    let remote_versions_cache = Arc::clone(&self.remote_versions_cache);
+    let local_versions_cache = Arc::clone(&self.local_versions_cache);
+    remote_versions_cache.lock().unwrap().clear();
+    local_versions_cache.lock().unwrap().clear();
+
+    // Refresh remote
     {
-      // Clear cache
-      let mut remote_versions_cache = self.remote_versions_cache.lock().unwrap();
-      let mut local_versions_cache = self.local_versions_cache.lock().unwrap();
-      remote_versions_cache.clear();
-      local_versions_cache.clear();
+      let raw_version_list = RawVersionList::fetch().await?;
+      remote_versions_cache.lock().unwrap().extend(raw_version_list.versions);
+    }
 
-      // Refresh remote
-      remote_versions_cache.extend(RawVersionList::fetch().await?.versions);
+    // Refresh local
+    let versions_dir = &self.game_dir.join("versions");
+    match read_dir(versions_dir) {
+      Ok(dir) => {
+        let dir_names: Vec<String> = dir
+          .filter_map(|entry| entry.ok())
+          .filter(|entry| entry.path().is_dir())
+          .map(|entry| entry.file_name().to_str().unwrap().to_string())
+          .collect();
 
-      // Refresh local
-      let versions_dir = &self.game_dir.join("versions");
-      match read_dir(versions_dir) {
-        Ok(dir) => {
-          let dir_names: Vec<String> = dir
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_dir())
-            .map(|entry| entry.file_name().to_str().unwrap().to_string())
-            .collect();
-
-          for version_id in dir_names {
-            info!("Scanning local version versions/{}", &version_id);
-            let version_json = &versions_dir.join(&version_id).join(format!("{}.json", &version_id));
-            if !version_json.is_file() {
-              warn!("Version file not found! Skipping. (versions/{}/{}.json)", &version_id, &version_id);
-              continue;
-            }
-            match serde_json::from_reader(File::open(version_json)?) {
-              Ok(json) => local_versions_cache.push(json),
-              Err(e) => warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, e),
-            }
+        for version_id in dir_names {
+          info!("Scanning local version versions/{}", &version_id);
+          let version_json = &versions_dir.join(&version_id).join(format!("{}.json", &version_id));
+          if !version_json.is_file() {
+            warn!("Version file not found! Skipping. (versions/{}/{}.json)", &version_id, &version_id);
+            continue;
+          }
+          match serde_json::from_reader(File::open(version_json)?) {
+            Ok(json) => local_versions_cache.lock().unwrap().push(json),
+            Err(e) => warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, e),
           }
         }
-        Err(err) => warn!("Failed to read version directory: {}", err),
       }
+      Err(err) => warn!("Failed to read version directory: {}", err),
     }
+
     Ok(())
   }
 

@@ -711,7 +711,7 @@ mod tests {
       .game_dir(game_dir)
       .proxy(ProxyOptions::NoProxy)
       .java_path(PathBuf::from("C:/Program Files/Eclipse Adoptium/jdk-17.0.6.10-hotspot/bin/java.exe"))
-      .authentication(Arc::new(OfflineUserAuthentication { username: "MonkeyKiller_".to_string(), uuid: Uuid::nil() }))
+      .authentication(Box::new(OfflineUserAuthentication { username: "MonkeyKiller_".to_string(), uuid: Uuid::nil() }))
       .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
       .build()?;
     let mut game_runner = MinecraftGameRunner::new(game_options);

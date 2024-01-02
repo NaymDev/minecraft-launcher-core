@@ -89,6 +89,16 @@ pub struct OfflineUserAuthentication {
   pub uuid: Uuid,
 }
 
+impl OfflineUserAuthentication {
+  pub fn new(username: &str) -> Self {
+    let uuid = Uuid::new_v3(&Uuid::NAMESPACE_DNS, username.as_bytes());
+    Self {
+      username: username.to_string(),
+      uuid,
+    }
+  }
+}
+
 impl UserAuthentication for OfflineUserAuthentication {
   fn get_authenticated_token(&self) -> String {
     String::new()
