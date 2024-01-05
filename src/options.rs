@@ -1,10 +1,10 @@
-use std::{ path::PathBuf, collections::HashMap, sync::Arc };
+use std::{ path::PathBuf, collections::HashMap };
 
 use derive_builder::Builder;
 use serde_json::Value;
 
 use crate::{
-  versions::{ info::MCVersion, json::rule::{ FeatureMatcher, RuleFeatureType }, VersionManager },
+  versions::{ info::MCVersion, json::rule::{ FeatureMatcher, RuleFeatureType } },
   download_utils::ProxyOptions,
   profile_manager::auth::UserAuthentication,
 };

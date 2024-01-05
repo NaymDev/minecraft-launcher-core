@@ -2,17 +2,15 @@ pub mod download_utils;
 pub mod versions;
 pub mod profile_manager;
 pub mod options;
+pub mod process;
 
 use std::{
   path::{ PathBuf, MAIN_SEPARATOR_STR },
   fs::{ self, create_dir_all, File },
   env::consts::ARCH,
-  process::{ Command, Child, Stdio, ChildStdout, ChildStderr },
   collections::{ HashMap, HashSet },
   ops::Deref,
-  io::{ self, Write, BufReader },
-  time::{ Duration, SystemTime },
-  os::windows::process::CommandExt,
+  io::{ self, Write },
 };
 
 use chrono::{ Utc, Timelike };
@@ -20,6 +18,7 @@ use download_utils::{ ProxyOptions, download_job::DownloadJob };
 use log::{ info, error, debug, warn };
 use options::{ GameOptions, MinecraftFeatureMatcher };
 use os_info::Type::Windows;
+use process::GameProcess;
 use regex::Regex;
 use serde_json::json;
 use thiserror::Error;
@@ -30,7 +29,7 @@ use versions::{
 };
 use zip::ZipArchive;
 
-use crate::versions::json::{ ArgumentType, library::ExtractRules, Sha1Sum };
+use crate::{ versions::json::{ ArgumentType, library::ExtractRules, Sha1Sum }, process::GameProcessBuilder };
 
 #[derive(Error, Debug)]
 #[error("{0}")]
@@ -573,103 +572,6 @@ impl ArgumentSubstitutorBuilder {
       }
       output
     }
-  }
-}
-
-pub struct GameProcess {
-  child: Child,
-  stdout: BufReader<ChildStdout>,
-  stderr: BufReader<ChildStderr>,
-}
-
-impl GameProcess {
-  pub fn new(java_path: &PathBuf, game_dir: &PathBuf, args: Vec<String>) -> Self {
-    let mut child = Command::new(java_path)
-      .stdout(Stdio::piped())
-      .stderr(Stdio::piped())
-      .current_dir(game_dir)
-      .args(args)
-      .creation_flags(0x08000000)
-      .spawn()
-      .unwrap();
-    Self {
-      stdout: BufReader::new(child.stdout.take().unwrap()),
-      stderr: BufReader::new(child.stderr.take().unwrap()),
-      child,
-    }
-  }
-
-  pub fn inner(&self) -> &Child {
-    &self.child
-  }
-
-  pub fn stdout(&mut self) -> &mut BufReader<ChildStdout> {
-    &mut self.stdout
-  }
-
-  pub fn stderr(&mut self) -> &mut BufReader<ChildStderr> {
-    &mut self.stderr
-  }
-
-  pub fn exit_status(&mut self) -> Option<i32> {
-    let status = self.child.try_wait();
-    match status {
-      Ok(status) => status.and_then(|s| s.code()),
-      Err(_) => Some(1),
-    }
-  }
-}
-
-pub struct GameProcessBuilder {
-  arguments: Vec<String>,
-  java_path: Option<PathBuf>,
-  directory: Option<PathBuf>,
-}
-
-impl GameProcessBuilder {
-  pub fn new() -> Self {
-    Self {
-      java_path: None,
-      arguments: vec![],
-      directory: None,
-    }
-  }
-
-  pub fn with_java_path(&mut self, java_path: &PathBuf) -> &mut Self {
-    self.java_path = Some(java_path.clone());
-    self
-  }
-
-  pub fn get_args(&self) -> Vec<String> {
-    self.arguments.clone()
-  }
-
-  pub fn with_argument(&mut self, argument: impl AsRef<str>) -> &mut Self {
-    self.arguments.push(argument.as_ref().to_string());
-    self
-  }
-
-  pub fn with_arguments(&mut self, arguments: Vec<impl AsRef<str>>) -> &mut Self {
-    self.arguments.extend(arguments.iter().map(|s| s.as_ref().to_string()));
-    self
-  }
-
-  pub fn directory(&mut self, directory: &PathBuf) -> &mut Self {
-    self.directory = Some(directory.clone());
-    self
-  }
-
-  pub fn spawn(self) -> Result<GameProcess, Box<dyn std::error::Error>> {
-    let java_path = self.java_path.as_ref().ok_or("Java path not set")?;
-    let directory = self.directory.as_ref().ok_or("Game directory not set")?;
-    let mut args = self.get_args();
-    if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
-      args = args
-        .into_iter()
-        .map(|arg| arg.replace("\"", "\\\""))
-        .collect();
-    }
-    Ok(GameProcess::new(java_path, directory, args))
   }
 }
 
