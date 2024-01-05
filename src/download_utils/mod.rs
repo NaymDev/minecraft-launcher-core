@@ -1,18 +1,17 @@
 pub mod download_job;
 
-use std::{ path::{ PathBuf, MAIN_SEPARATOR_STR }, io::{ Write, Cursor, Read }, fs::{ create_dir_all, self, File }, time::Duration, sync::Mutex };
+use std::{ path::{ PathBuf, MAIN_SEPARATOR_STR }, io::{ Cursor, Read }, fs::{ create_dir_all, self, File }, time::Duration, sync::Mutex };
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use libflate::non_blocking::gzip;
 use log::{ info, warn };
 use reqwest::{ Client, Proxy, Url, header::HeaderValue };
 
 use crate::{ versions::json::{ Sha1Sum, AssetObject }, MinecraftLauncherError };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ProxyOptions {
-  NoProxy,
+  #[default] NoProxy,
   Proxy(reqwest::Url),
 }
 

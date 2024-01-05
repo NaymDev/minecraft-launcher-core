@@ -6,7 +6,6 @@ pub mod artifact;
 use std::{ collections::{ HashMap, HashSet }, io::Read, fmt::{ Debug, Display }, path::{ PathBuf, MAIN_SEPARATOR_STR } };
 
 use async_recursion::async_recursion;
-use log::info;
 use reqwest::Client;
 use serde::{ Serialize, Deserialize };
 use sha1::{ Digest, Sha1 };
@@ -345,7 +344,7 @@ impl LocalVersionInfo {
     }
   }
 
-  pub fn get_classpath(&self, os: &OperatingSystem, mc_dir: &PathBuf, matcher: &impl FeatureMatcher) -> Vec<PathBuf> {
+  pub fn get_classpath(&self, _os: &OperatingSystem, mc_dir: &PathBuf, matcher: &impl FeatureMatcher) -> Vec<PathBuf> {
     let mut vec = vec![];
     let libraries = self.get_relevant_libraries(matcher);
     for library in libraries {

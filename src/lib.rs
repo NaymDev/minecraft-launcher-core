@@ -7,10 +7,12 @@ use std::{
   path::{ PathBuf, MAIN_SEPARATOR_STR },
   fs::{ self, create_dir_all, File },
   env::consts::ARCH,
-  process::Command,
+  process::{ Command, Child, Stdio, ChildStdout, ChildStderr },
   collections::{ HashMap, HashSet },
   ops::Deref,
-  io::{ self, Write },
+  io::{ self, Write, BufReader },
+  time::{ Duration, SystemTime },
+  os::windows::process::CommandExt,
 };
 
 use chrono::{ Utc, Timelike };
@@ -100,7 +102,7 @@ impl MinecraftGameRunner {
 }
 
 impl MinecraftGameRunner {
-  pub async fn launch(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+  pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
     self.version_manager.refresh().await?;
     info!("Queuing library & version downloads");
@@ -126,8 +128,7 @@ impl MinecraftGameRunner {
     self.download_required_files(&local_version).await?;
 
     self.local_version = Some(local_version);
-    self.launch_game().await?;
-    Ok(())
+    self.launch_game().await
   }
 
   async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
@@ -142,7 +143,7 @@ impl MinecraftGameRunner {
     Ok(())
   }
 
-  async fn launch_game(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+  async fn launch_game(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     info!("Launching game");
 
     let natives_dir = self.get_version_dir().join(format!("{}-natives-{}", self.options.version.to_string(), Utc::now().nanosecond()));
@@ -182,6 +183,7 @@ impl MinecraftGameRunner {
     create_dir_all(&server_resource_packs_dir)?;
 
     let mut game_process_builder = GameProcessBuilder::new();
+    game_process_builder.with_java_path(&self.options.java_path);
     game_process_builder.directory(game_dir);
 
     if let Some(jvm_args) = &self.options.jvm_args {
@@ -231,7 +233,7 @@ impl MinecraftGameRunner {
     }
 
     game_process_builder.with_argument(&local_version.get_main_class());
-    info!("Half command: {}", game_process_builder.get_full_command().join(" "));
+    info!("Half command: {}", game_process_builder.get_args().join(" "));
     if !local_version.arguments.is_empty() {
       if let Some(arguments) = local_version.arguments.get(&ArgumentType::Game) {
         game_process_builder.with_arguments(
@@ -284,35 +286,22 @@ impl MinecraftGameRunner {
       }
     }
 
-    info!("Running java {}", game_process_builder.get_full_command().join(" "));
+    info!("Running java {}", game_process_builder.get_args().join(" "));
 
     let regex = Regex::new(r"\$\{.+\}")?;
     game_process_builder
-      .get_full_command()
+      .get_args()
       .iter()
       .filter_map(|arg| regex.find(arg))
       .for_each(|arg| debug!("Unresolved variable - {:?}", arg.as_str()));
 
-    let mut args = game_process_builder.get_full_command();
-    if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
-      args = args
-        .into_iter()
-        .map(|arg| arg.replace("\"", "\\\""))
-        .collect();
-    }
-
-    let mut child = Command::new(&self.options.java_path) // TODO: build GameProcessBuilder
-      .current_dir(&self.options.game_dir)
-      .args(args)
-      .spawn()?;
+    let process = game_process_builder.spawn();
 
     self.perform_cleanups()?;
 
-    let status = child.wait()?;
-    if status.success() {
-      Ok(())
-    } else {
-      Err(Box::new(MinecraftLauncherError("Failed to launch game".to_string())))
+    match process {
+      Ok(process) => Ok(process),
+      Err(err) => Err(Box::new(MinecraftLauncherError(format!("Failed to launch game: {err}")))),
     }
   }
 
@@ -327,25 +316,27 @@ impl MinecraftGameRunner {
 
   fn cleanup_old_natives(&self) -> Result<(), Box<dyn std::error::Error>> {
     let game_dir = &self.version_manager.game_dir;
+
+    let current_time = Utc::now().timestamp_millis() as u128;
+    // let time_threshold = Duration::from_secs(3600);
+
     for local_ver in self.version_manager.get_local_versions() {
       let version_id = local_ver.get_id().to_string();
       let version_dir = game_dir.join("versions").join(&version_id);
-      let dir_names: Vec<String> = fs
+      let dirs: Vec<PathBuf> = fs
         ::read_dir(&version_dir)?
         .filter_map(|file| file.ok())
         .filter(|file| file.file_type().unwrap().is_dir())
         .map(|file| file.file_name().to_str().unwrap().to_string())
+        .filter(|name| name.starts_with(&format!("{version_id}-natives-")))
+        .map(|name| version_dir.join(name))
         .collect();
-      let time = Utc::now().timestamp_millis() as u128;
-      let regex = Regex::new(format!("{}-natives-(\\d+)", version_id).as_str())?;
-      for dir_name in dir_names {
-        let captures = regex.captures(&dir_name);
-        if let Some(captures) = captures {
-          let native_dir = version_dir.join(&dir_name);
-          let native_time = captures.get(1).unwrap().as_str().parse::<u128>()?;
-          if time - native_time > 3600000 {
-            debug!("Deleting {}", native_dir.display());
-            fs::remove_dir_all(&native_dir)?;
+      for native_dir in dirs {
+        let modified_time = native_dir.metadata()?.modified()?;
+        if current_time - modified_time.elapsed()?.as_millis() >= 3600000 {
+          debug!("Deleting {}", native_dir.display());
+          if let Err(err) = fs::remove_dir_all(&native_dir) {
+            warn!("Failed to delete {}: {}", native_dir.display(), err);
           }
         }
       }
@@ -585,20 +576,71 @@ impl ArgumentSubstitutorBuilder {
   }
 }
 
+pub struct GameProcess {
+  child: Child,
+  stdout: BufReader<ChildStdout>,
+  stderr: BufReader<ChildStderr>,
+}
+
+impl GameProcess {
+  pub fn new(java_path: &PathBuf, game_dir: &PathBuf, args: Vec<String>) -> Self {
+    let mut child = Command::new(java_path)
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
+      .current_dir(game_dir)
+      .args(args)
+      .creation_flags(0x08000000)
+      .spawn()
+      .unwrap();
+    Self {
+      stdout: BufReader::new(child.stdout.take().unwrap()),
+      stderr: BufReader::new(child.stderr.take().unwrap()),
+      child,
+    }
+  }
+
+  pub fn inner(&self) -> &Child {
+    &self.child
+  }
+
+  pub fn stdout(&mut self) -> &mut BufReader<ChildStdout> {
+    &mut self.stdout
+  }
+
+  pub fn stderr(&mut self) -> &mut BufReader<ChildStderr> {
+    &mut self.stderr
+  }
+
+  pub fn exit_status(&mut self) -> Option<i32> {
+    let status = self.child.try_wait();
+    match status {
+      Ok(status) => status.and_then(|s| s.code()),
+      Err(_) => Some(1),
+    }
+  }
+}
+
 pub struct GameProcessBuilder {
   arguments: Vec<String>,
+  java_path: Option<PathBuf>,
   directory: Option<PathBuf>,
 }
 
 impl GameProcessBuilder {
   pub fn new() -> Self {
     Self {
+      java_path: None,
       arguments: vec![],
       directory: None,
     }
   }
 
-  pub fn get_full_command(&self) -> Vec<String> {
+  pub fn with_java_path(&mut self, java_path: &PathBuf) -> &mut Self {
+    self.java_path = Some(java_path.clone());
+    self
+  }
+
+  pub fn get_args(&self) -> Vec<String> {
     self.arguments.clone()
   }
 
@@ -616,6 +658,19 @@ impl GameProcessBuilder {
     self.directory = Some(directory.clone());
     self
   }
+
+  pub fn spawn(self) -> Result<GameProcess, Box<dyn std::error::Error>> {
+    let java_path = self.java_path.as_ref().ok_or("Java path not set")?;
+    let directory = self.directory.as_ref().ok_or("Game directory not set")?;
+    let mut args = self.get_args();
+    if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
+      args = args
+        .into_iter()
+        .map(|arg| arg.replace("\"", "\\\""))
+        .collect();
+    }
+    Ok(GameProcess::new(java_path, directory, args))
+  }
 }
 
 #[cfg(test)]
@@ -623,7 +678,7 @@ mod tests {
   use crate::{ profile_manager::auth::OfflineUserAuthentication, options::{ LauncherOptions, GameOptionsBuilder }, versions::info::MCVersion };
 
   use super::*;
-  use std::{ env::temp_dir, sync::{ Arc, Mutex } };
+  use std::{ env::temp_dir, sync::Mutex };
   use log::{ info, trace, LevelFilter };
   use log4rs::{
     config::{ Appender, Root, Logger },

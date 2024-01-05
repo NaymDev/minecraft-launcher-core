@@ -42,8 +42,9 @@ impl LauncherOptions {
 #[builder(pattern = "owned", setter(strip_option))]
 pub struct GameOptions {
   pub version: MCVersion,
-  pub proxy: ProxyOptions,
   pub game_dir: PathBuf,
+  #[builder(default)]
+  pub proxy: ProxyOptions,
   #[builder(default)]
   pub resolution: Option<MinecraftResolution>,
   pub java_path: PathBuf,
