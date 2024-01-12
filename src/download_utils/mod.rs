@@ -37,7 +37,7 @@ pub trait Downloadable {
   fn set_start_time(&self, start_time: u64);
 
   async fn make_connection(&self, url: &str) -> reqwest::Result<reqwest::Response> {
-    let client = self.get_proxy().client_builder().timeout(Duration::from_secs(5)).build()?;
+    let client = self.get_proxy().client_builder().timeout(Duration::from_secs(15)).build()?;
     client
       .get(url)
       .header("Cache-Control", "no-store,max-age=0,no-cache")
