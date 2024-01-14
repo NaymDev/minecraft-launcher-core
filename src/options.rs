@@ -55,6 +55,11 @@ pub struct GameOptions {
   pub substitutor_overrides: HashMap<String, String>,
   #[builder(default)]
   pub jvm_args: Option<Vec<String>>,
+
+  #[builder(default = "16")]
+  pub max_concurrent_downloads: u16,
+  #[builder(default = "5")]
+  pub max_download_attempts: u8,
 }
 
 #[derive(Debug, Clone)]

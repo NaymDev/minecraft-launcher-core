@@ -131,10 +131,10 @@ impl MinecraftGameRunner {
   }
 
   async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
-    let mut job1 = DownloadJob::new("Version & Libraries", false);
+    let mut job1 = DownloadJob::new("Version & Libraries", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
     self.version_manager.download_version(&self, local_version, &mut job1)?;
 
-    let job2 = DownloadJob::new("Resources", false);
+    let job2 = DownloadJob::new("Resources", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
     job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
 
     job1.start().await?;
@@ -285,7 +285,15 @@ impl MinecraftGameRunner {
       }
     }
 
-    info!("Running java {}", game_process_builder.get_args().join(" "));
+    {
+      // Remove token from args
+      let mut args = game_process_builder.get_args().join(" ");
+      let token = self.options.authentication.get_authenticated_token();
+      if !token.is_empty() {
+        args = args.replace(&token, "?????");
+      }
+      debug!("Running {} {}", &self.options.java_path.display(), args);
+    }
 
     let regex = Regex::new(r"\$\{.+\}")?;
     game_process_builder
