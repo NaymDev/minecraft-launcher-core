@@ -1,6 +1,6 @@
-use std::{fmt::{Debug, Display}, path::PathBuf};
+use std::{ fmt::{ Debug, Display }, path::PathBuf };
 
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(try_from = "String", into = "String")]
@@ -70,7 +70,8 @@ impl Artifact {
 
 impl TryFrom<String> for Artifact {
   type Error = String;
-  fn try_from(value: String) -> Result<Self, Self::Error> {
+  fn try_from(og_value: String) -> Result<Self, Self::Error> {
+    let value = og_value.clone();
     let (value, ext) = value.split_once("@").unwrap_or((&value, "jar"));
 
     let parts: Vec<&str> = value.split(":").collect();
@@ -85,7 +86,7 @@ impl TryFrom<String> for Artifact {
     let version = parts[2].to_string();
     let classifier = parts.get(3).map(|s| s.to_string());
     Ok(Self {
-      original_descriptor: Some(value.to_string()),
+      original_descriptor: Some(og_value),
       group_id,
       artifact_id,
       version,
