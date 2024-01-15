@@ -26,10 +26,10 @@ pub trait UserAuthentication: Send + Debug {
 
 #[derive(Debug, Clone)]
 pub struct CommonUserAuthentication {
-  access_token: String,
-  auth_playername: String,
-  auth_uuid: Uuid,
-  user_type: String,
+  pub access_token: String,
+  pub auth_playername: String,
+  pub auth_uuid: Uuid,
+  pub user_type: String,
 }
 
 impl CommonUserAuthentication {
