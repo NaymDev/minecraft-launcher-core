@@ -91,7 +91,7 @@ pub struct OfflineUserAuthentication {
 
 impl OfflineUserAuthentication {
   pub fn new(username: &str) -> Self {
-    let uuid = Uuid::new_v3(&Uuid::NAMESPACE_DNS, username.as_bytes());
+    let uuid = Uuid::new_v3(&Uuid::NAMESPACE_DNS, format!("OfflinePlayer:{}", username).as_bytes());
     Self {
       username: username.to_string(),
       uuid,
