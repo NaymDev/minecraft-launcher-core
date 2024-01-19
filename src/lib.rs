@@ -3,6 +3,7 @@ pub mod versions;
 pub mod profile_manager;
 pub mod options;
 pub mod process;
+pub mod monitor;
 
 use std::{
   path::{ PathBuf, MAIN_SEPARATOR_STR },
@@ -11,6 +12,7 @@ use std::{
   collections::{ HashMap, HashSet },
   ops::Deref,
   io::{ self, Write },
+  sync::Arc,
 };
 
 use chrono::{ Utc, Timelike };
@@ -131,11 +133,23 @@ impl MinecraftGameRunner {
   }
 
   async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
-    let mut job1 = DownloadJob::new("Version & Libraries", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
+    let mut job1 = DownloadJob::new(
+      "Version & Libraries",
+      false,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      Arc::clone(&self.options.download_monitor)
+    );
     self.version_manager.download_version(&self, local_version, &mut job1)?;
 
-    let job2 = DownloadJob::new("Resources", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
-    job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
+    let mut job2 = DownloadJob::new(
+      "Resources",
+      false,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      Arc::clone(&self.options.download_monitor)
+    );
+    job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap())?;
 
     job1.start().await?;
     job2.start().await?;
