@@ -466,6 +466,7 @@ pub struct AssetDownloadable {
   pub end_time: Arc<Mutex<Option<u64>>>,
 
   pub name: String,
+  pub status: Mutex<AssetDownloadableStatus>,
   pub asset: AssetObject,
   pub url_base: String,
   pub destination: PathBuf,
@@ -489,6 +490,7 @@ impl AssetDownloadable {
       end_time: Arc::new(Mutex::new(None)),
 
       name: name.to_string(),
+      status: Mutex::new(AssetDownloadableStatus::Downloading),
       asset: asset.clone(),
       url_base: url_base.to_string(),
       destination: objects_dir.clone(),
@@ -497,6 +499,9 @@ impl AssetDownloadable {
   }
 
   fn decompress_asset(&self, target: &PathBuf, compressed_target: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    if let Ok(mut status) = self.status.lock() {
+      *status = AssetDownloadableStatus::Extracting;
+    }
     let reader = &mut File::open(compressed_target)?;
     let mut decoder = gzip::Decoder::new(reader);
     let mut bytes = Vec::new();
@@ -541,8 +546,7 @@ impl Downloadable for AssetDownloadable {
   }
 
   fn get_status(&self) -> String {
-    let file_name = self.get_target_file().file_name().and_then(OsStr::to_str).unwrap_or(self.url());
-    format!("Downloading {}", file_name)
+    format!("{} {}", self.status.lock().unwrap().as_str(), self.name)
   }
 
   fn get_monitor(&self) -> &Arc<DownloadableMonitor> {
@@ -567,6 +571,9 @@ impl Downloadable for AssetDownloadable {
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
     *self.attempts.lock()? += 1;
+    if let Ok(mut status) = self.status.lock() {
+      *status = AssetDownloadableStatus::Downloading;
+    }
 
     let target = self.get_target_file();
     let compressed_target = if self.asset.has_compressed_alternative() {
@@ -650,6 +657,20 @@ impl Downloadable for AssetDownloadable {
     }
 
     Ok(())
+  }
+}
+
+pub enum AssetDownloadableStatus {
+  Downloading,
+  Extracting,
+}
+
+impl AssetDownloadableStatus {
+  pub fn as_str(&self) -> &str {
+    match self {
+      AssetDownloadableStatus::Downloading => "Downloading",
+      AssetDownloadableStatus::Extracting => "Extracting",
+    }
   }
 }
 
