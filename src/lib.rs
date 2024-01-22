@@ -12,6 +12,7 @@ use std::{
   collections::{ HashMap, HashSet },
   ops::Deref,
   io::{ self, Write },
+  sync::Arc,
 };
 
 use chrono::{ Utc, Timelike };
@@ -20,6 +21,7 @@ use log::{ info, error, debug, warn };
 use options::{ GameOptions, MinecraftFeatureMatcher };
 use os_info::Type::Windows;
 use process::GameProcess;
+use progress_reporter::ProgressReporter;
 use regex::Regex;
 use serde_json::json;
 use thiserror::Error;
@@ -99,14 +101,20 @@ impl MinecraftGameRunner {
     let os = os_info::get();
     os.os_type() == Windows && os.edition().is_some_and(|edition| edition.contains("Windows 10"))
   }
+
+  fn progress_reporter(&self) -> &Arc<ProgressReporter> {
+    &self.options.progress_reporter
+  }
 }
 
 impl MinecraftGameRunner {
   pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
+    self.progress_reporter().set("Fetching version manifest", 0, 2);
     self.version_manager.refresh().await?;
     info!("Queuing library & version downloads");
 
+    self.progress_reporter().set_status("Resolving local version").set_progress(1);
     let mut local_version = match self.version_manager.get_local_version(&self.options.version) {
       Some(local_version) => local_version,
       None => { self.version_manager.install_version(&self.options.version).await? }
@@ -124,6 +132,7 @@ impl MinecraftGameRunner {
 
     local_version = local_version.resolve(&self.version_manager, HashSet::new()).await?;
 
+    self.progress_reporter().clear();
     // TODO: self.migrate_old_assets()
     self.download_required_files(&local_version).await?;
 
@@ -132,10 +141,22 @@ impl MinecraftGameRunner {
   }
 
   async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
-    let mut job1 = DownloadJob::new("Version & Libraries", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
+    let mut job1 = DownloadJob::new(
+      "Version & Libraries",
+      false,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      self.progress_reporter()
+    );
     self.version_manager.download_version(&self, local_version, &mut job1)?;
 
-    let job2 = DownloadJob::new("Resources", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
+    let mut job2 = DownloadJob::new(
+      "Resources",
+      false,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      self.progress_reporter()
+    );
     job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
 
     job1.start().await?;
