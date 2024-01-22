@@ -3,6 +3,7 @@ pub mod versions;
 pub mod profile_manager;
 pub mod options;
 pub mod process;
+pub mod progress_reporter;
 
 use std::{
   path::{ PathBuf, MAIN_SEPARATOR_STR },
