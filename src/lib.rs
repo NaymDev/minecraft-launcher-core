@@ -607,10 +607,15 @@ impl ArgumentSubstitutorBuilder {
 
 #[cfg(test)]
 mod tests {
-  use crate::{ profile_manager::auth::OfflineUserAuthentication, options::{ LauncherOptions, GameOptionsBuilder }, versions::info::MCVersion };
+  use crate::{
+    profile_manager::auth::OfflineUserAuthentication,
+    options::{ LauncherOptions, GameOptionsBuilder },
+    versions::info::MCVersion,
+    progress_reporter::ProgressUpdate,
+  };
 
   use super::*;
-  use std::{ env::temp_dir, sync::Mutex };
+  use std::{ env::temp_dir, sync::{ Mutex, Arc } };
   use log::{ info, trace, LevelFilter };
   use log4rs::{
     config::{ Appender, Root, Logger },
@@ -693,6 +698,44 @@ mod tests {
 
     info!("Attempting to launch the game");
 
+    let progress: Arc<Mutex<Option<(String, u32, u32)>>> = Arc::new(Mutex::new(None));
+
+    let reporter = {
+      let progress = Arc::clone(&progress);
+      ProgressReporter::new(move |update| {
+        if let Ok(mut progress) = progress.lock() {
+          if let ProgressUpdate::Clear = update {
+            progress.take();
+            debug!("Progress hidden");
+          } else {
+            let mut taken = progress.take().unwrap_or_default();
+            match update {
+              ProgressUpdate::SetStatus(status) => {
+                taken.0 = status;
+              }
+              ProgressUpdate::SetProgress(progress) => {
+                taken.1 = progress;
+              }
+              ProgressUpdate::SetTotal(total) => {
+                taken.2 = total;
+              }
+              ProgressUpdate::SetAll(status, progress, total) => {
+                taken = (status, progress, total);
+              }
+              _ => {}
+            }
+            if taken.2 != 0 {
+              let percentage = (((taken.1 as f64) / (taken.2 as f64)) * 20f64).ceil() as usize;
+              let left = 20 - percentage;
+              let bar = format!("[{}{}]", "■".repeat(percentage), "·".repeat(left));
+              debug!("{status} {bar} ({progress}%)", status = taken.0, progress = (((taken.1 as f64) / (taken.2 as f64)) * 100f64).ceil() as u32);
+            }
+            progress.replace(taken);
+          }
+        }
+      })
+    };
+
     let game_options = GameOptionsBuilder::default()
       .version(MCVersion::new("1.20.1-forge-47.2.0"))
       .game_dir(game_dir)
@@ -700,6 +743,7 @@ mod tests {
       .java_path(PathBuf::from("C:/Program Files/Eclipse Adoptium/jdk-17.0.6.10-hotspot/bin/java.exe"))
       .authentication(Box::new(OfflineUserAuthentication { username: "MonkeyKiller_".to_string(), uuid: Uuid::nil() }))
       .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
+      .progress_reporter(reporter)
       .build()?;
     let mut game_runner = MinecraftGameRunner::new(game_options);
     game_runner.launch().await.unwrap();
