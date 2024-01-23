@@ -1,16 +1,8 @@
 pub mod download_job;
 
-use std::{
-  path::{ PathBuf, MAIN_SEPARATOR_STR },
-  io::{ Cursor, Read },
-  fs::{ create_dir_all, self, File },
-  time::Duration,
-  sync::{ Mutex, Arc },
-  ffi::OsStr,
-};
+use std::{ path::{ PathBuf, MAIN_SEPARATOR_STR }, io::{ Cursor, Read }, fs::{ create_dir_all, self, File }, time::Duration, sync::Mutex };
 
 use async_trait::async_trait;
-use dyn_clone::DynClone;
 use libflate::non_blocking::gzip;
 use log::{ info, warn };
 use reqwest::{ Client, Proxy, Url, header::HeaderValue };
@@ -34,27 +26,15 @@ impl ProxyOptions {
 }
 
 #[async_trait]
-pub trait Downloadable: DynClone {
+pub trait Downloadable {
   fn get_proxy(&self) -> &ProxyOptions;
   fn url(&self) -> &String;
   fn get_target_file(&self) -> &PathBuf;
   fn force_download(&self) -> bool;
   fn get_attempts(&self) -> usize;
 
-  fn get_monitor(&self) -> Arc<Mutex<DownloadableMonitor>>;
-
-  fn get_expected_size(&self) -> Option<u64>;
-  fn set_expected_size(&self, size: u64);
-
   fn get_start_time(&self) -> Option<u64>;
-  fn get_end_time(&self) -> Option<u64>;
   fn set_start_time(&self, start_time: u64);
-  fn set_end_time(&self, end_time: u64);
-
-  fn get_status(&self) -> String {
-    let file_name = self.get_target_file().file_name().and_then(OsStr::to_str).unwrap_or(self.url());
-    format!("Downloading {}", file_name)
-  }
 
   async fn make_connection(&self, url: &str) -> reqwest::Result<reqwest::Response> {
     let client = self.get_proxy().client_builder().timeout(Duration::from_secs(15)).build()?;
@@ -83,36 +63,23 @@ pub trait Downloadable: DynClone {
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>>;
 }
 
-impl Clone for Box<dyn Downloadable + Send + Sync> {
-  fn clone(&self) -> Self {
-    dyn_clone::clone_box(&**self)
-  }
-}
-
 pub struct SimpleDownloadable {
   pub url: String,
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Arc<Mutex<usize>>,
-  pub start_time: Arc<Mutex<Option<u64>>>,
-
-  pub monitor: Arc<Mutex<DownloadableMonitor>>,
+  pub attempts: Mutex<usize>,
+  pub start_time: Mutex<Option<u64>>,
 }
 
 // Checksummed downloadable
-#[derive(Clone)]
 pub struct ChecksummedDownloadable {
   pub url: String,
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Arc<Mutex<usize>>,
-  pub start_time: Arc<Mutex<Option<u64>>>,
-  pub end_time: Arc<Mutex<Option<u64>>>,
-
-  pub monitor: Arc<Mutex<DownloadableMonitor>>,
-  pub expected_size: Arc<Mutex<Option<u64>>>,
+  pub attempts: Mutex<usize>,
+  pub start_time: Mutex<Option<u64>>,
 }
 
 impl ChecksummedDownloadable {
@@ -122,12 +89,8 @@ impl ChecksummedDownloadable {
       target_file: target_file.to_path_buf(),
       proxy,
       force_download,
-      attempts: Arc::new(Mutex::new(0)),
-      start_time: Arc::new(Mutex::new(None)),
-      end_time: Arc::new(Mutex::new(None)),
-
-      monitor: Arc::new(Mutex::new(DownloadableMonitor::new())),
-      expected_size: Arc::new(Mutex::new(None)),
+      attempts: Mutex::new(0),
+      start_time: Mutex::new(None),
     }
   }
 
@@ -161,36 +124,12 @@ impl Downloadable for ChecksummedDownloadable {
     *self.attempts.lock().unwrap()
   }
 
-  fn get_monitor(&self) -> Arc<Mutex<DownloadableMonitor>> {
-    Arc::clone(&self.monitor)
-  }
-
-  fn get_expected_size(&self) -> Option<u64> {
-    self.expected_size.lock().unwrap().clone()
-  }
-
-  fn set_expected_size(&self, size: u64) {
-    let mut expected_size = self.expected_size.lock().unwrap();
-    if expected_size.is_none() {
-      self.get_monitor().lock().unwrap().set_total(size);
-    }
-    expected_size.replace(size);
-  }
-
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
 
-  fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
-  }
-
   fn set_start_time(&self, start_time: u64) {
     *self.start_time.lock().unwrap() = Some(start_time);
-  }
-
-  fn set_end_time(&self, end_time: u64) {
-    self.end_time.lock().unwrap().replace(end_time);
   }
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
@@ -219,9 +158,6 @@ impl Downloadable for ChecksummedDownloadable {
       return Ok(());
     } else {
       let res = self.make_connection(&self.url).await?;
-      if let Some(len) = res.content_length() {
-        self.set_expected_size(len);
-      }
       let bytes = res.bytes().await?;
       local_hash = Some(Sha1Sum::from_reader(&mut Cursor::new(&bytes))?);
       fs::write(&target_file, &bytes)?;
@@ -246,18 +182,14 @@ impl Downloadable for ChecksummedDownloadable {
   }
 }
 
-#[derive(Clone)]
 pub struct PreHashedDownloadable {
   pub url: String,
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Arc<Mutex<usize>>,
-  pub start_time: Arc<Mutex<Option<u64>>>,
-  pub end_time: Arc<Mutex<Option<u64>>>,
+  pub attempts: Mutex<usize>,
+  pub start_time: Mutex<Option<u64>>,
 
-  pub monitor: Arc<Mutex<DownloadableMonitor>>,
-  pub expected_size: Arc<Mutex<Option<u64>>>,
   pub expected_hash: Sha1Sum,
 }
 
@@ -268,12 +200,9 @@ impl PreHashedDownloadable {
       target_file: target_file.to_path_buf(),
       proxy,
       force_download,
-      attempts: Arc::new(Mutex::new(0)),
-      start_time: Arc::new(Mutex::new(None)),
-      end_time: Arc::new(Mutex::new(None)),
+      attempts: Mutex::new(0),
+      start_time: Mutex::new(None),
 
-      monitor: Arc::new(Mutex::new(DownloadableMonitor::new())),
-      expected_size: Arc::new(Mutex::new(None)),
       expected_hash,
     }
   }
@@ -301,36 +230,12 @@ impl Downloadable for PreHashedDownloadable {
     *self.attempts.lock().unwrap()
   }
 
-  fn get_monitor(&self) -> Arc<Mutex<DownloadableMonitor>> {
-    Arc::clone(&self.monitor)
-  }
-
-  fn get_expected_size(&self) -> Option<u64> {
-    self.expected_size.lock().unwrap().clone()
-  }
-
-  fn set_expected_size(&self, size: u64) {
-    let mut expected_size = self.expected_size.lock().unwrap();
-    if expected_size.is_none() {
-      self.get_monitor().lock().unwrap().set_total(size);
-    }
-    expected_size.replace(size);
-  }
-
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
 
-  fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
-  }
-
   fn set_start_time(&self, start_time: u64) {
     *self.start_time.lock().unwrap() = Some(start_time);
-  }
-
-  fn set_end_time(&self, end_time: u64) {
-    self.end_time.lock().unwrap().replace(end_time);
   }
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
@@ -347,9 +252,6 @@ impl Downloadable for PreHashedDownloadable {
     }
 
     let res = self.make_connection(&self.url).await?;
-    if let Some(len) = res.content_length() {
-      self.set_expected_size(len);
-    }
     let bytes = res.bytes().await?;
     let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
     fs::write(&target, &bytes)?;
@@ -371,18 +273,13 @@ impl Downloadable for PreHashedDownloadable {
   }
 }
 
-#[derive(Clone)]
 pub struct EtagDownloadable {
   pub url: String,
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Arc<Mutex<usize>>,
-  pub start_time: Arc<Mutex<Option<u64>>>,
-  pub end_time: Arc<Mutex<Option<u64>>>,
-
-  pub monitor: Arc<Mutex<DownloadableMonitor>>,
-  pub expected_size: Arc<Mutex<Option<u64>>>,
+  pub attempts: Mutex<usize>,
+  pub start_time: Mutex<Option<u64>>,
 }
 
 impl EtagDownloadable {
@@ -392,12 +289,8 @@ impl EtagDownloadable {
       target_file: target_file.to_path_buf(),
       proxy,
       force_download,
-      attempts: Arc::new(Mutex::new(0)),
-      start_time: Arc::new(Mutex::new(None)),
-      end_time: Arc::new(Mutex::new(None)),
-
-      monitor: Arc::new(Mutex::new(DownloadableMonitor::new())),
-      expected_size: Arc::new(Mutex::new(None)),
+      attempts: Mutex::new(0),
+      start_time: Mutex::new(None),
     }
   }
 
@@ -437,36 +330,12 @@ impl Downloadable for EtagDownloadable {
     *self.attempts.lock().unwrap()
   }
 
-  fn get_monitor(&self) -> Arc<Mutex<DownloadableMonitor>> {
-    Arc::clone(&self.monitor)
-  }
-
-  fn get_expected_size(&self) -> Option<u64> {
-    self.expected_size.lock().unwrap().clone()
-  }
-
-  fn set_expected_size(&self, size: u64) {
-    let mut expected_size = self.expected_size.lock().unwrap();
-    if expected_size.is_none() {
-      self.get_monitor().lock().unwrap().set_total(size);
-    }
-    expected_size.replace(size);
-  }
-
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
 
-  fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
-  }
-
   fn set_start_time(&self, start_time: u64) {
     *self.start_time.lock().unwrap() = Some(start_time);
-  }
-
-  fn set_end_time(&self, end_time: u64) {
-    self.end_time.lock().unwrap().replace(end_time);
   }
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
@@ -475,9 +344,6 @@ impl Downloadable for EtagDownloadable {
 
     let target = &self.target_file;
     let res = self.make_connection(&self.url).await?;
-    if let Some(len) = res.content_length() {
-      self.set_expected_size(len);
-    }
     let etag = Self::get_etag(res.headers().get("ETag"));
     let bytes = res.bytes().await?;
     let md5 = md5::compute(&bytes).0;
@@ -502,39 +368,18 @@ impl Downloadable for EtagDownloadable {
   }
 }
 
-#[derive(Clone)]
 pub struct AssetDownloadable {
   pub url: String,
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Arc<Mutex<usize>>,
-  pub start_time: Arc<Mutex<Option<u64>>>,
-  pub end_time: Arc<Mutex<Option<u64>>>,
+  pub attempts: Mutex<usize>,
+  pub start_time: Mutex<Option<u64>>,
 
   pub name: String,
-  pub status: Arc<Mutex<AssetDownloadableStatus>>,
   pub asset: AssetObject,
   pub url_base: String,
   pub destination: PathBuf,
-
-  pub monitor: Arc<Mutex<DownloadableMonitor>>,
-  pub expected_size: Arc<Mutex<Option<u64>>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AssetDownloadableStatus {
-  Downloading,
-  Extracting,
-}
-
-impl AssetDownloadableStatus {
-  pub fn name(&self) -> &str {
-    match self {
-      AssetDownloadableStatus::Downloading => "Downloading",
-      AssetDownloadableStatus::Extracting => "Extracting",
-    }
-  }
 }
 
 impl AssetDownloadable {
@@ -549,25 +394,17 @@ impl AssetDownloadable {
       url,
       target_file,
       force_download: false,
-      attempts: Arc::new(Mutex::new(0)),
-      start_time: Arc::new(Mutex::new(None)),
-      end_time: Arc::new(Mutex::new(None)),
+      attempts: Mutex::new(0),
+      start_time: Mutex::new(None),
 
       name: name.to_string(),
-      status: Arc::new(Mutex::new(AssetDownloadableStatus::Downloading)),
       asset: asset.clone(),
       url_base: url_base.to_string(),
       destination: objects_dir.clone(),
-
-      monitor: Arc::new(Mutex::new(DownloadableMonitor::new())),
-      expected_size: Arc::new(Mutex::new(None)),
     }
   }
 
   fn decompress_asset(&self, target: &PathBuf, compressed_target: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(mut status) = self.status.lock() {
-      *status = AssetDownloadableStatus::Extracting;
-    }
     let reader = &mut File::open(compressed_target)?;
     let mut decoder = gzip::Decoder::new(reader);
     let mut bytes = Vec::new();
@@ -595,11 +432,6 @@ impl Downloadable for AssetDownloadable {
     &self.proxy
   }
 
-  fn get_status(&self) -> String {
-    let status = &*self.status.lock().unwrap();
-    format!("{} {}", status.name(), self.name)
-  }
-
   fn url(&self) -> &String {
     &self.url
   }
@@ -616,36 +448,12 @@ impl Downloadable for AssetDownloadable {
     *self.attempts.lock().unwrap()
   }
 
-  fn get_monitor(&self) -> Arc<Mutex<DownloadableMonitor>> {
-    Arc::clone(&self.monitor)
-  }
-
-  fn get_expected_size(&self) -> Option<u64> {
-    self.expected_size.lock().unwrap().clone()
-  }
-
-  fn set_expected_size(&self, size: u64) {
-    let mut expected_size = self.expected_size.lock().unwrap();
-    if expected_size.is_none() {
-      self.get_monitor().lock().unwrap().set_total(size);
-    }
-    expected_size.replace(size);
-  }
-
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
 
-  fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
-  }
-
   fn set_start_time(&self, start_time: u64) {
     *self.start_time.lock().unwrap() = Some(start_time);
-  }
-
-  fn set_end_time(&self, end_time: u64) {
-    self.end_time.lock().unwrap().replace(end_time);
   }
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
@@ -695,9 +503,6 @@ impl Downloadable for AssetDownloadable {
 
     if let (Some(compressed_url), Some(compressed_target)) = (&compressed_url, &compressed_target) {
       let res = self.make_connection(&compressed_url).await?;
-      if let Some(len) = res.content_length() {
-        self.set_expected_size(len);
-      }
       let bytes = res.bytes().await?;
       fs::write(compressed_target, &bytes)?;
       let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
@@ -717,9 +522,6 @@ impl Downloadable for AssetDownloadable {
       }
     } else {
       let res = self.make_connection(&url).await?;
-      if let Some(len) = res.content_length() {
-        self.set_expected_size(len);
-      }
       let bytes = res.bytes().await?;
       fs::write(target, &bytes)?;
       let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
@@ -733,49 +535,5 @@ impl Downloadable for AssetDownloadable {
     }
 
     Ok(())
-  }
-}
-
-pub struct DownloadableMonitor {
-  current: u64,
-  total: u64,
-  update_listeners: Mutex<Vec<Box<dyn Fn() + Send + 'static>>>,
-}
-
-impl DownloadableMonitor {
-  pub fn new() -> Self {
-    Self {
-      current: 0,
-      total: 0,
-      update_listeners: Mutex::new(vec![]),
-    }
-  }
-
-  pub fn get_current(&self) -> u64 {
-    self.current
-  }
-
-  pub fn get_total(&self) -> u64 {
-    self.total
-  }
-
-  pub fn set_current(&mut self, current: u64) {
-    self.current = current;
-    self.update_progress();
-  }
-
-  pub fn set_total(&mut self, total: u64) {
-    self.total = total;
-    self.update_progress();
-  }
-
-  pub fn add_update_listener(&self, listener: impl Fn() + Send + 'static) {
-    self.update_listeners.lock().unwrap().push(Box::new(listener));
-  }
-
-  fn update_progress(&self) {
-    for listener in self.update_listeners.lock().unwrap().iter() {
-      listener();
-    }
   }
 }

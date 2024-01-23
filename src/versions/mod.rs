@@ -170,7 +170,7 @@ impl VersionManager {
         false,
         game_runner.feature_matcher.deref()
       )
-    )?;
+    );
     let jar_id = local_version.get_jar().to_string();
     let jar_path = format!("versions/{}/{}.jar", &jar_id, &jar_id);
     let jar_file_path = game_runner.options.game_dir.join(&jar_path.replace("/", MAIN_SEPARATOR_STR));
@@ -179,10 +179,10 @@ impl VersionManager {
     if let Some(info) = info {
       download_job.add_downloadables(
         vec![Box::new(PreHashedDownloadable::new(game_runner.options.proxy.clone(), &info.url, &jar_file_path, false, info.sha1.clone()))]
-      )?;
+      );
     } else {
       let url = format!("https://s3.amazonaws.com/Minecraft.Download/{jar_path}");
-      download_job.add_downloadables(vec![Box::new(EtagDownloadable::new(game_runner.options.proxy.clone(), &url, &jar_file_path, false))])?;
+      download_job.add_downloadables(vec![Box::new(EtagDownloadable::new(game_runner.options.proxy.clone(), &url, &jar_file_path, false))]);
     }
 
     Ok(())

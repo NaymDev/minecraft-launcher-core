@@ -1,4 +1,4 @@
-use std::{ path::PathBuf, collections::HashMap, sync::{ Mutex, Arc } };
+use std::{ path::PathBuf, collections::HashMap };
 
 use derive_builder::Builder;
 use serde_json::Value;
@@ -7,7 +7,6 @@ use crate::{
   versions::{ info::MCVersion, json::rule::{ FeatureMatcher, RuleFeatureType } },
   download_utils::ProxyOptions,
   profile_manager::auth::UserAuthentication,
-  monitor::{ Monitor, MockMonitor },
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -61,15 +60,6 @@ pub struct GameOptions {
   pub max_concurrent_downloads: u16,
   #[builder(default = "5")]
   pub max_download_attempts: u8,
-
-  #[builder(default = "Self::default_download_monitor()")]
-  pub download_monitor: Arc<Mutex<dyn Monitor + Send + Sync>>,
-}
-
-impl GameOptionsBuilder {
-  fn default_download_monitor() -> Arc<Mutex<impl Monitor + Send + Sync>> {
-    Arc::new(Mutex::new(MockMonitor::new()))
-  }
 }
 
 #[derive(Debug, Clone)]
