@@ -6,7 +6,8 @@ use serde_json::Value;
 use crate::{
   versions::{ info::MCVersion, json::rule::{ FeatureMatcher, RuleFeatureType } },
   download_utils::ProxyOptions,
-  profile_manager::auth::UserAuthentication, progress_reporter::ProgressReporter,
+  profile_manager::auth::UserAuthentication,
+  progress_reporter::ProgressReporter,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -66,8 +67,12 @@ pub struct GameOptions {
 }
 
 impl GameOptionsBuilder {
-  pub fn progress_reporter(mut self, progress_reporter: ProgressReporter) -> Self {
-    self.progress_reporter = Some(Arc::new(progress_reporter));
+  pub fn progress_reporter(self, progress_reporter: ProgressReporter) -> Self {
+    self.progress_reporter_arc(&Arc::new(progress_reporter))
+  }
+
+  pub fn progress_reporter_arc(mut self, arc: &Arc<ProgressReporter>) -> Self {
+    self.progress_reporter = Some(Arc::clone(arc));
     self
   }
 }
