@@ -1,4 +1,4 @@
-use std::{ path::PathBuf, collections::HashMap };
+use std::{ path::PathBuf, collections::HashMap, fmt::Debug, sync::Arc };
 
 use derive_builder::Builder;
 use serde_json::Value;
@@ -7,6 +7,7 @@ use crate::{
   versions::{ info::MCVersion, json::rule::{ FeatureMatcher, RuleFeatureType } },
   download_utils::ProxyOptions,
   profile_manager::auth::UserAuthentication,
+  progress_reporter::ProgressReporter,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -56,10 +57,24 @@ pub struct GameOptions {
   #[builder(default)]
   pub jvm_args: Option<Vec<String>>,
 
+  #[builder(default, setter(custom))]
+  pub progress_reporter: Arc<ProgressReporter>,
+
   #[builder(default = "16")]
   pub max_concurrent_downloads: u16,
   #[builder(default = "5")]
   pub max_download_attempts: u8,
+}
+
+impl GameOptionsBuilder {
+  pub fn progress_reporter(self, progress_reporter: ProgressReporter) -> Self {
+    self.progress_reporter_arc(&Arc::new(progress_reporter))
+  }
+
+  pub fn progress_reporter_arc(mut self, arc: &Arc<ProgressReporter>) -> Self {
+    self.progress_reporter = Some(Arc::clone(arc));
+    self
+  }
 }
 
 #[derive(Debug, Clone)]

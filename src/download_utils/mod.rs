@@ -1,13 +1,20 @@
 pub mod download_job;
 
-use std::{ path::{ PathBuf, MAIN_SEPARATOR_STR }, io::{ Cursor, Read }, fs::{ create_dir_all, self, File }, time::Duration, sync::Mutex };
+use std::{
+  path::{ PathBuf, MAIN_SEPARATOR_STR },
+  io::{ Cursor, Read },
+  fs::{ create_dir_all, self, File },
+  time::Duration,
+  sync::{ Mutex, Arc },
+  ffi::OsStr,
+};
 
 use async_trait::async_trait;
 use libflate::non_blocking::gzip;
 use log::{ info, warn };
 use reqwest::{ Client, Proxy, Url, header::HeaderValue };
 
-use crate::{ versions::json::{ Sha1Sum, AssetObject }, MinecraftLauncherError };
+use crate::{ versions::json::{ Sha1Sum, AssetObject }, MinecraftLauncherError, progress_reporter::ProgressReporter };
 
 #[derive(Debug, Clone, Default)]
 pub enum ProxyOptions {
@@ -33,8 +40,13 @@ pub trait Downloadable {
   fn force_download(&self) -> bool;
   fn get_attempts(&self) -> usize;
 
+  fn get_status(&self) -> String;
+  fn get_monitor(&self) -> &Arc<DownloadableMonitor>;
+
   fn get_start_time(&self) -> Option<u64>;
   fn set_start_time(&self, start_time: u64);
+  fn get_end_time(&self) -> Option<u64>;
+  fn set_end_time(&self, end_time: u64);
 
   async fn make_connection(&self, url: &str) -> reqwest::Result<reqwest::Response> {
     let client = self.get_proxy().client_builder().timeout(Duration::from_secs(15)).build()?;
@@ -68,8 +80,8 @@ pub struct SimpleDownloadable {
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Mutex<usize>,
-  pub start_time: Mutex<Option<u64>>,
+  pub attempts: Arc<Mutex<usize>>,
+  pub start_time: Arc<Mutex<Option<u64>>>,
 }
 
 // Checksummed downloadable
@@ -78,8 +90,11 @@ pub struct ChecksummedDownloadable {
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Mutex<usize>,
-  pub start_time: Mutex<Option<u64>>,
+  pub attempts: Arc<Mutex<usize>>,
+  pub start_time: Arc<Mutex<Option<u64>>>,
+  pub end_time: Arc<Mutex<Option<u64>>>,
+
+  pub monitor: Arc<DownloadableMonitor>,
 }
 
 impl ChecksummedDownloadable {
@@ -89,8 +104,11 @@ impl ChecksummedDownloadable {
       target_file: target_file.to_path_buf(),
       proxy,
       force_download,
-      attempts: Mutex::new(0),
-      start_time: Mutex::new(None),
+      attempts: Arc::new(Mutex::new(0)),
+      start_time: Arc::new(Mutex::new(None)),
+      end_time: Arc::new(Mutex::new(None)),
+
+      monitor: Arc::new(DownloadableMonitor::new(0, 5242880)),
     }
   }
 
@@ -124,12 +142,29 @@ impl Downloadable for ChecksummedDownloadable {
     *self.attempts.lock().unwrap()
   }
 
+  fn get_status(&self) -> String {
+    let file_name = self.get_target_file().file_name().and_then(OsStr::to_str).unwrap_or(self.url());
+    format!("Downloading {}", file_name)
+  }
+
+  fn get_monitor(&self) -> &Arc<DownloadableMonitor> {
+    &self.monitor
+  }
+
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
 
   fn set_start_time(&self, start_time: u64) {
     *self.start_time.lock().unwrap() = Some(start_time);
+  }
+
+  fn get_end_time(&self) -> Option<u64> {
+    self.end_time.lock().unwrap().clone()
+  }
+
+  fn set_end_time(&self, end_time: u64) {
+    *self.end_time.lock().unwrap() = Some(end_time);
   }
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
@@ -158,6 +193,9 @@ impl Downloadable for ChecksummedDownloadable {
       return Ok(());
     } else {
       let res = self.make_connection(&self.url).await?;
+      if let Some(content_len) = res.content_length() {
+        self.monitor.set_total(content_len as usize);
+      }
       let bytes = res.bytes().await?;
       local_hash = Some(Sha1Sum::from_reader(&mut Cursor::new(&bytes))?);
       fs::write(&target_file, &bytes)?;
@@ -187,10 +225,12 @@ pub struct PreHashedDownloadable {
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Mutex<usize>,
-  pub start_time: Mutex<Option<u64>>,
+  pub attempts: Arc<Mutex<usize>>,
+  pub start_time: Arc<Mutex<Option<u64>>>,
+  pub end_time: Arc<Mutex<Option<u64>>>,
 
   pub expected_hash: Sha1Sum,
+  pub monitor: Arc<DownloadableMonitor>,
 }
 
 impl PreHashedDownloadable {
@@ -200,10 +240,12 @@ impl PreHashedDownloadable {
       target_file: target_file.to_path_buf(),
       proxy,
       force_download,
-      attempts: Mutex::new(0),
-      start_time: Mutex::new(None),
+      attempts: Arc::new(Mutex::new(0)),
+      start_time: Arc::new(Mutex::new(None)),
+      end_time: Arc::new(Mutex::new(None)),
 
       expected_hash,
+      monitor: Arc::new(DownloadableMonitor::new(0, 5242880)),
     }
   }
 }
@@ -230,12 +272,29 @@ impl Downloadable for PreHashedDownloadable {
     *self.attempts.lock().unwrap()
   }
 
+  fn get_status(&self) -> String {
+    let file_name = self.get_target_file().file_name().and_then(OsStr::to_str).unwrap_or(self.url());
+    format!("Downloading {}", file_name)
+  }
+
+  fn get_monitor(&self) -> &Arc<DownloadableMonitor> {
+    &self.monitor
+  }
+
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
 
   fn set_start_time(&self, start_time: u64) {
     *self.start_time.lock().unwrap() = Some(start_time);
+  }
+
+  fn get_end_time(&self) -> Option<u64> {
+    self.end_time.lock().unwrap().clone()
+  }
+
+  fn set_end_time(&self, end_time: u64) {
+    *self.end_time.lock().unwrap() = Some(end_time);
   }
 
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
@@ -252,6 +311,9 @@ impl Downloadable for PreHashedDownloadable {
     }
 
     let res = self.make_connection(&self.url).await?;
+    if let Some(content_len) = res.content_length() {
+      self.monitor.set_total(content_len as usize);
+    }
     let bytes = res.bytes().await?;
     let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
     fs::write(&target, &bytes)?;
@@ -278,8 +340,11 @@ pub struct EtagDownloadable {
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Mutex<usize>,
-  pub start_time: Mutex<Option<u64>>,
+  pub attempts: Arc<Mutex<usize>>,
+  pub start_time: Arc<Mutex<Option<u64>>>,
+  pub end_time: Arc<Mutex<Option<u64>>>,
+
+  pub monitor: Arc<DownloadableMonitor>,
 }
 
 impl EtagDownloadable {
@@ -289,8 +354,11 @@ impl EtagDownloadable {
       target_file: target_file.to_path_buf(),
       proxy,
       force_download,
-      attempts: Mutex::new(0),
-      start_time: Mutex::new(None),
+      attempts: Arc::new(Mutex::new(0)),
+      start_time: Arc::new(Mutex::new(None)),
+      end_time: Arc::new(Mutex::new(None)),
+
+      monitor: Arc::new(DownloadableMonitor::new(0, 5242880)),
     }
   }
 
@@ -330,6 +398,15 @@ impl Downloadable for EtagDownloadable {
     *self.attempts.lock().unwrap()
   }
 
+  fn get_status(&self) -> String {
+    let file_name = self.get_target_file().file_name().and_then(OsStr::to_str).unwrap_or(self.url());
+    format!("Downloading {}", file_name)
+  }
+
+  fn get_monitor(&self) -> &Arc<DownloadableMonitor> {
+    &self.monitor
+  }
+
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
@@ -338,12 +415,23 @@ impl Downloadable for EtagDownloadable {
     *self.start_time.lock().unwrap() = Some(start_time);
   }
 
+  fn get_end_time(&self) -> Option<u64> {
+    self.end_time.lock().unwrap().clone()
+  }
+
+  fn set_end_time(&self, end_time: u64) {
+    *self.end_time.lock().unwrap() = Some(end_time);
+  }
+
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
     *self.attempts.lock()? += 1;
     self.ensure_file_writable(&self.target_file)?;
 
     let target = &self.target_file;
     let res = self.make_connection(&self.url).await?;
+    if let Some(content_len) = res.content_length() {
+      self.monitor.set_total(content_len as usize);
+    }
     let etag = Self::get_etag(res.headers().get("ETag"));
     let bytes = res.bytes().await?;
     let md5 = md5::compute(&bytes).0;
@@ -373,13 +461,16 @@ pub struct AssetDownloadable {
   pub target_file: PathBuf,
   pub proxy: ProxyOptions,
   pub force_download: bool,
-  pub attempts: Mutex<usize>,
-  pub start_time: Mutex<Option<u64>>,
+  pub attempts: Arc<Mutex<usize>>,
+  pub start_time: Arc<Mutex<Option<u64>>>,
+  pub end_time: Arc<Mutex<Option<u64>>>,
 
   pub name: String,
+  pub status: Mutex<AssetDownloadableStatus>,
   pub asset: AssetObject,
   pub url_base: String,
   pub destination: PathBuf,
+  pub monitor: Arc<DownloadableMonitor>,
 }
 
 impl AssetDownloadable {
@@ -394,17 +485,23 @@ impl AssetDownloadable {
       url,
       target_file,
       force_download: false,
-      attempts: Mutex::new(0),
-      start_time: Mutex::new(None),
+      attempts: Arc::new(Mutex::new(0)),
+      start_time: Arc::new(Mutex::new(None)),
+      end_time: Arc::new(Mutex::new(None)),
 
       name: name.to_string(),
+      status: Mutex::new(AssetDownloadableStatus::Downloading),
       asset: asset.clone(),
       url_base: url_base.to_string(),
       destination: objects_dir.clone(),
+      monitor: Arc::new(DownloadableMonitor::new(0, 5242880)),
     }
   }
 
   fn decompress_asset(&self, target: &PathBuf, compressed_target: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    if let Ok(mut status) = self.status.lock() {
+      *status = AssetDownloadableStatus::Extracting;
+    }
     let reader = &mut File::open(compressed_target)?;
     let mut decoder = gzip::Decoder::new(reader);
     let mut bytes = Vec::new();
@@ -448,6 +545,14 @@ impl Downloadable for AssetDownloadable {
     *self.attempts.lock().unwrap()
   }
 
+  fn get_status(&self) -> String {
+    format!("{} {}", self.status.lock().unwrap().as_str(), self.name)
+  }
+
+  fn get_monitor(&self) -> &Arc<DownloadableMonitor> {
+    &self.monitor
+  }
+
   fn get_start_time(&self) -> Option<u64> {
     self.start_time.lock().unwrap().clone()
   }
@@ -456,8 +561,19 @@ impl Downloadable for AssetDownloadable {
     *self.start_time.lock().unwrap() = Some(start_time);
   }
 
+  fn get_end_time(&self) -> Option<u64> {
+    self.end_time.lock().unwrap().clone()
+  }
+
+  fn set_end_time(&self, end_time: u64) {
+    *self.end_time.lock().unwrap() = Some(end_time);
+  }
+
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
     *self.attempts.lock()? += 1;
+    if let Ok(mut status) = self.status.lock() {
+      *status = AssetDownloadableStatus::Downloading;
+    }
 
     let target = self.get_target_file();
     let compressed_target = if self.asset.has_compressed_alternative() {
@@ -503,6 +619,9 @@ impl Downloadable for AssetDownloadable {
 
     if let (Some(compressed_url), Some(compressed_target)) = (&compressed_url, &compressed_target) {
       let res = self.make_connection(&compressed_url).await?;
+      if let Some(content_len) = res.content_length() {
+        self.monitor.set_total(content_len as usize);
+      }
       let bytes = res.bytes().await?;
       fs::write(compressed_target, &bytes)?;
       let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
@@ -522,6 +641,9 @@ impl Downloadable for AssetDownloadable {
       }
     } else {
       let res = self.make_connection(&url).await?;
+      if let Some(content_len) = res.content_length() {
+        self.monitor.set_total(content_len as usize);
+      }
       let bytes = res.bytes().await?;
       fs::write(target, &bytes)?;
       let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
@@ -535,5 +657,64 @@ impl Downloadable for AssetDownloadable {
     }
 
     Ok(())
+  }
+}
+
+pub enum AssetDownloadableStatus {
+  Downloading,
+  Extracting,
+}
+
+impl AssetDownloadableStatus {
+  pub fn as_str(&self) -> &str {
+    match self {
+      AssetDownloadableStatus::Downloading => "Downloading",
+      AssetDownloadableStatus::Extracting => "Extracting",
+    }
+  }
+}
+
+pub struct DownloadableMonitor {
+  current: Mutex<usize>,
+  total: Mutex<usize>,
+  reporter: Mutex<Arc<ProgressReporter>>,
+}
+
+impl DownloadableMonitor {
+  pub fn new(current: usize, total: usize) -> Self {
+    Self {
+      current: Mutex::new(current),
+      total: Mutex::new(total),
+      reporter: Mutex::new(Arc::new(ProgressReporter::new(|_| {}))),
+    }
+  }
+
+  pub fn get_current(&self) -> usize {
+    *self.current.lock().unwrap()
+  }
+
+  pub fn get_total(&self) -> usize {
+    *self.total.lock().unwrap()
+  }
+
+  pub fn set_current(&self, current: usize) {
+    *self.current.lock().unwrap() = current;
+    self.reporter
+      .lock()
+      .unwrap()
+      .set_progress(current as u32);
+  }
+
+  pub fn set_total(&self, total: usize) {
+    *self.total.lock().unwrap() = total;
+    self.reporter
+      .lock()
+      .unwrap()
+      .set_total(total as u32);
+  }
+
+  pub fn set_reporter(&self, reporter: Arc<ProgressReporter>) {
+    *self.reporter.lock().unwrap() = reporter;
+    // TODO: fire update?
   }
 }

@@ -3,6 +3,7 @@ pub mod versions;
 pub mod profile_manager;
 pub mod options;
 pub mod process;
+pub mod progress_reporter;
 
 use std::{
   path::{ PathBuf, MAIN_SEPARATOR_STR },
@@ -11,6 +12,7 @@ use std::{
   collections::{ HashMap, HashSet },
   ops::Deref,
   io::{ self, Write },
+  sync::Arc,
 };
 
 use chrono::{ Utc, Timelike };
@@ -19,6 +21,7 @@ use log::{ info, error, debug, warn };
 use options::{ GameOptions, MinecraftFeatureMatcher };
 use os_info::Type::Windows;
 use process::GameProcess;
+use progress_reporter::ProgressReporter;
 use regex::Regex;
 use serde_json::json;
 use thiserror::Error;
@@ -98,14 +101,20 @@ impl MinecraftGameRunner {
     let os = os_info::get();
     os.os_type() == Windows && os.edition().is_some_and(|edition| edition.contains("Windows 10"))
   }
+
+  fn progress_reporter(&self) -> &Arc<ProgressReporter> {
+    &self.options.progress_reporter
+  }
 }
 
 impl MinecraftGameRunner {
   pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
+    self.progress_reporter().set("Fetching version manifest", 0, 2);
     self.version_manager.refresh().await?;
     info!("Queuing library & version downloads");
 
+    self.progress_reporter().set_status("Resolving local version").set_progress(1);
     let mut local_version = match self.version_manager.get_local_version(&self.options.version) {
       Some(local_version) => local_version,
       None => { self.version_manager.install_version(&self.options.version).await? }
@@ -123,6 +132,7 @@ impl MinecraftGameRunner {
 
     local_version = local_version.resolve(&self.version_manager, HashSet::new()).await?;
 
+    self.progress_reporter().clear();
     // TODO: self.migrate_old_assets()
     self.download_required_files(&local_version).await?;
 
@@ -131,10 +141,22 @@ impl MinecraftGameRunner {
   }
 
   async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
-    let mut job1 = DownloadJob::new("Version & Libraries", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
+    let mut job1 = DownloadJob::new(
+      "Version & Libraries",
+      false,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      self.progress_reporter()
+    );
     self.version_manager.download_version(&self, local_version, &mut job1)?;
 
-    let job2 = DownloadJob::new("Resources", false, self.options.max_concurrent_downloads, self.options.max_download_attempts);
+    let mut job2 = DownloadJob::new(
+      "Resources",
+      false,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      self.progress_reporter()
+    );
     job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
 
     job1.start().await?;
@@ -585,10 +607,15 @@ impl ArgumentSubstitutorBuilder {
 
 #[cfg(test)]
 mod tests {
-  use crate::{ profile_manager::auth::OfflineUserAuthentication, options::{ LauncherOptions, GameOptionsBuilder }, versions::info::MCVersion };
+  use crate::{
+    profile_manager::auth::OfflineUserAuthentication,
+    options::{ LauncherOptions, GameOptionsBuilder },
+    versions::info::MCVersion,
+    progress_reporter::ProgressUpdate,
+  };
 
   use super::*;
-  use std::{ env::temp_dir, sync::Mutex };
+  use std::{ env::temp_dir, sync::{ Mutex, Arc } };
   use log::{ info, trace, LevelFilter };
   use log4rs::{
     config::{ Appender, Root, Logger },
@@ -671,6 +698,44 @@ mod tests {
 
     info!("Attempting to launch the game");
 
+    let progress: Arc<Mutex<Option<(String, u32, u32)>>> = Arc::new(Mutex::new(None));
+
+    let reporter = {
+      let progress = Arc::clone(&progress);
+      ProgressReporter::new(move |update| {
+        if let Ok(mut progress) = progress.lock() {
+          if let ProgressUpdate::Clear = update {
+            progress.take();
+            debug!("Progress hidden");
+          } else {
+            let mut taken = progress.take().unwrap_or_default();
+            match update {
+              ProgressUpdate::SetStatus(status) => {
+                taken.0 = status;
+              }
+              ProgressUpdate::SetProgress(progress) => {
+                taken.1 = progress;
+              }
+              ProgressUpdate::SetTotal(total) => {
+                taken.2 = total;
+              }
+              ProgressUpdate::SetAll(status, progress, total) => {
+                taken = (status, progress, total);
+              }
+              _ => {}
+            }
+            if taken.2 != 0 {
+              let percentage = (((taken.1 as f64) / (taken.2 as f64)) * 20f64).ceil() as usize;
+              let left = 20 - percentage;
+              let bar = format!("[{}{}]", "■".repeat(percentage), "·".repeat(left));
+              debug!("{status} {bar} ({progress}%)", status = taken.0, progress = (((taken.1 as f64) / (taken.2 as f64)) * 100f64).ceil() as u32);
+            }
+            progress.replace(taken);
+          }
+        }
+      })
+    };
+
     let game_options = GameOptionsBuilder::default()
       .version(MCVersion::new("1.20.1-forge-47.2.0"))
       .game_dir(game_dir)
@@ -678,6 +743,7 @@ mod tests {
       .java_path(PathBuf::from("C:/Program Files/Eclipse Adoptium/jdk-17.0.6.10-hotspot/bin/java.exe"))
       .authentication(Box::new(OfflineUserAuthentication { username: "MonkeyKiller_".to_string(), uuid: Uuid::nil() }))
       .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
+      .progress_reporter(reporter)
       .build()?;
     let mut game_runner = MinecraftGameRunner::new(game_options);
     game_runner.launch().await.unwrap();
