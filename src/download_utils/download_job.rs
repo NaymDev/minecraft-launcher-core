@@ -148,7 +148,7 @@ impl DownloadJob {
 
         if let Some(last_file) = last_file {
           if last_file.get_end_time().is_none() && (file.get_start_time() >= last_file.get_start_time() || file.get_end_time().is_some()) {
-            break;
+            continue;
           }
         }
         last_file = Some(file);
