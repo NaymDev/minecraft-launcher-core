@@ -1,18 +1,19 @@
 pub mod download_job;
 
 use std::{
-  path::{ PathBuf, MAIN_SEPARATOR_STR },
-  io::{ Cursor, Read },
-  fs::{ create_dir_all, self, File },
-  time::Duration,
-  sync::{ Mutex, Arc },
   ffi::OsStr,
+  fs::{ self, create_dir_all, File },
+  io::{ Cursor, Read },
+  path::{ PathBuf, MAIN_SEPARATOR_STR },
+  sync::{ Arc, Mutex },
+  time::Duration,
 };
 
 use async_trait::async_trait;
 use libflate::non_blocking::gzip;
 use log::{ info, warn };
-use reqwest::{ Client, Proxy, Url, header::HeaderValue };
+use once_cell::sync::Lazy;
+use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy, Url };
 
 use crate::{ versions::json::{ Sha1Sum, AssetObject }, MinecraftLauncherError, progress_reporter::ProgressReporter };
 
@@ -32,6 +33,14 @@ impl ProxyOptions {
   }
 }
 
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+  let mut headers = HeaderMap::new();
+  headers.append("Cache-Control", HeaderValue::from_static("no-store,max-age=0,no-cache"));
+  headers.append("Expires", HeaderValue::from_static("0"));
+  headers.append("Pragma", HeaderValue::from_static("no-cache"));
+  Client::builder().timeout(Duration::from_secs(15)).default_headers(headers).build().unwrap_or(Client::new())
+});
+
 #[async_trait]
 pub trait Downloadable {
   fn get_proxy(&self) -> &ProxyOptions;
@@ -49,15 +58,9 @@ pub trait Downloadable {
   fn set_end_time(&self, end_time: u64);
 
   async fn make_connection(&self, url: &str) -> reqwest::Result<reqwest::Response> {
-    let client = self.get_proxy().client_builder().timeout(Duration::from_secs(15)).build()?;
-    client
-      .get(url)
-      .header("Cache-Control", "no-store,max-age=0,no-cache")
-      .header("Expires", "0")
-      .header("Pragma", "no-cache")
-      .send().await?
-      // TODO: CHANGE and handle for each downloadable
-      .error_for_status()
+    // TODO: CHANGE and handle for each downloadable
+    // TODO: proxy
+    HTTP_CLIENT.get(url).send().await?.error_for_status()
   }
 
   fn ensure_file_writable(&self, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
