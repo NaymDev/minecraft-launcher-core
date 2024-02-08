@@ -78,15 +78,6 @@ pub trait Downloadable {
   async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>>;
 }
 
-pub struct SimpleDownloadable {
-  pub url: String,
-  pub target_file: PathBuf,
-  pub proxy: ProxyOptions,
-  pub force_download: bool,
-  pub attempts: Arc<Mutex<usize>>,
-  pub start_time: Arc<Mutex<Option<u64>>>,
-}
-
 // Checksummed downloadable
 pub struct ChecksummedDownloadable {
   pub url: String,
