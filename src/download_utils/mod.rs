@@ -12,7 +12,6 @@ use std::{
 use async_trait::async_trait;
 use libflate::non_blocking::gzip;
 use log::{ info, warn };
-use once_cell::sync::Lazy;
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy, Url };
 
 use crate::{ versions::json::{ Sha1Sum, AssetObject }, MinecraftLauncherError, progress_reporter::ProgressReporter };
@@ -31,19 +30,21 @@ impl ProxyOptions {
     }
     builder
   }
-}
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-  let mut headers = HeaderMap::new();
-  headers.append("Cache-Control", HeaderValue::from_static("no-store,max-age=0,no-cache"));
-  headers.append("Expires", HeaderValue::from_static("0"));
-  headers.append("Pragma", HeaderValue::from_static("no-cache"));
-  Client::builder().timeout(Duration::from_secs(15)).default_headers(headers).build().unwrap_or(Client::new())
-});
+  pub fn create_http_client(&self) -> Client {
+    let mut headers = HeaderMap::new();
+    headers.append("Cache-Control", HeaderValue::from_static("no-store,max-age=0,no-cache"));
+    headers.append("Expires", HeaderValue::from_static("0"));
+    headers.append("Pragma", HeaderValue::from_static("no-cache"));
+
+    let builder = self.client_builder().default_headers(headers).timeout(Duration::from_secs(15));
+    builder.build().unwrap_or(Client::new())
+  }
+}
 
 #[async_trait]
 pub trait Downloadable {
-  fn get_proxy(&self) -> &ProxyOptions;
+  fn get_http_client(&self) -> &Client;
   fn url(&self) -> &String;
   fn get_target_file(&self) -> &PathBuf;
   fn force_download(&self) -> bool;
@@ -59,8 +60,7 @@ pub trait Downloadable {
 
   async fn make_connection(&self, url: &str) -> reqwest::Result<reqwest::Response> {
     // TODO: CHANGE and handle for each downloadable
-    // TODO: proxy
-    HTTP_CLIENT.get(url).send().await?.error_for_status()
+    self.get_http_client().get(url).send().await?.error_for_status()
   }
 
   fn ensure_file_writable(&self, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -82,7 +82,7 @@ pub trait Downloadable {
 pub struct ChecksummedDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub proxy: ProxyOptions,
+  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -92,11 +92,11 @@ pub struct ChecksummedDownloadable {
 }
 
 impl ChecksummedDownloadable {
-  pub fn new(proxy: ProxyOptions, url: &str, target_file: &PathBuf, force_download: bool) -> Self {
+  pub fn new(http_client: Client, url: &str, target_file: &PathBuf, force_download: bool) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
-      proxy,
+      http_client,
       force_download,
       attempts: Arc::new(Mutex::new(0)),
       start_time: Arc::new(Mutex::new(None)),
@@ -116,8 +116,8 @@ impl ChecksummedDownloadable {
 
 #[async_trait]
 impl Downloadable for ChecksummedDownloadable {
-  fn get_proxy(&self) -> &ProxyOptions {
-    &self.proxy
+  fn get_http_client(&self) -> &Client {
+    &self.http_client
   }
 
   fn url(&self) -> &String {
@@ -217,7 +217,7 @@ impl Downloadable for ChecksummedDownloadable {
 pub struct PreHashedDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub proxy: ProxyOptions,
+  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -228,11 +228,11 @@ pub struct PreHashedDownloadable {
 }
 
 impl PreHashedDownloadable {
-  pub fn new(proxy: ProxyOptions, url: &str, target_file: &PathBuf, force_download: bool, expected_hash: Sha1Sum) -> Self {
+  pub fn new(http_client: Client, url: &str, target_file: &PathBuf, force_download: bool, expected_hash: Sha1Sum) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
-      proxy,
+      http_client,
       force_download,
       attempts: Arc::new(Mutex::new(0)),
       start_time: Arc::new(Mutex::new(None)),
@@ -246,8 +246,8 @@ impl PreHashedDownloadable {
 
 #[async_trait]
 impl Downloadable for PreHashedDownloadable {
-  fn get_proxy(&self) -> &ProxyOptions {
-    &self.proxy
+  fn get_http_client(&self) -> &Client {
+    &self.http_client
   }
 
   fn url(&self) -> &String {
@@ -332,7 +332,7 @@ impl Downloadable for PreHashedDownloadable {
 pub struct EtagDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub proxy: ProxyOptions,
+  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -342,11 +342,11 @@ pub struct EtagDownloadable {
 }
 
 impl EtagDownloadable {
-  pub fn new(proxy: ProxyOptions, url: &str, target_file: &PathBuf, force_download: bool) -> Self {
+  pub fn new(http_client: Client, url: &str, target_file: &PathBuf, force_download: bool) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
-      proxy,
+      http_client,
       force_download,
       attempts: Arc::new(Mutex::new(0)),
       start_time: Arc::new(Mutex::new(None)),
@@ -372,8 +372,8 @@ impl EtagDownloadable {
 
 #[async_trait]
 impl Downloadable for EtagDownloadable {
-  fn get_proxy(&self) -> &ProxyOptions {
-    &self.proxy
+  fn get_http_client(&self) -> &Client {
+    &self.http_client
   }
 
   fn url(&self) -> &String {
@@ -453,7 +453,7 @@ impl Downloadable for EtagDownloadable {
 pub struct AssetDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub proxy: ProxyOptions,
+  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -468,14 +468,14 @@ pub struct AssetDownloadable {
 }
 
 impl AssetDownloadable {
-  pub fn new(proxy: ProxyOptions, name: &str, asset: &AssetObject, url_base: &str, objects_dir: &PathBuf) -> Self {
+  pub fn new(http_client: Client, name: &str, asset: &AssetObject, url_base: &str, objects_dir: &PathBuf) -> Self {
     let path = AssetObject::create_path_from_hash(&asset.hash);
     let mut url = Url::parse(url_base).unwrap();
     url.set_path(&path);
     let url = url.to_string();
     let target_file = objects_dir.join(path.replace("/", MAIN_SEPARATOR_STR));
     Self {
-      proxy,
+      http_client,
       url,
       target_file,
       force_download: false,
@@ -519,8 +519,8 @@ impl AssetDownloadable {
 
 #[async_trait]
 impl Downloadable for AssetDownloadable {
-  fn get_proxy(&self) -> &ProxyOptions {
-    &self.proxy
+  fn get_http_client(&self) -> &Client {
+    &self.http_client
   }
 
   fn url(&self) -> &String {

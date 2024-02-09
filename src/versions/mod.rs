@@ -176,13 +176,12 @@ impl VersionManager {
     let jar_file_path = game_runner.options.game_dir.join(&jar_path.replace("/", MAIN_SEPARATOR_STR));
 
     let info = local_version.get_download_url(DownloadType::Client);
+    let http_client = game_runner.options.proxy.create_http_client();
     if let Some(info) = info {
-      download_job.add_downloadables(
-        vec![Box::new(PreHashedDownloadable::new(game_runner.options.proxy.clone(), &info.url, &jar_file_path, false, info.sha1.clone()))]
-      );
+      download_job.add_downloadables(vec![Box::new(PreHashedDownloadable::new(http_client, &info.url, &jar_file_path, false, info.sha1.clone()))]);
     } else {
       let url = format!("https://s3.amazonaws.com/Minecraft.Download/{jar_path}");
-      download_job.add_downloadables(vec![Box::new(EtagDownloadable::new(game_runner.options.proxy.clone(), &url, &jar_file_path, false))]);
+      download_job.add_downloadables(vec![Box::new(EtagDownloadable::new(http_client, &url, &jar_file_path, false))]);
     }
 
     Ok(())
@@ -211,8 +210,10 @@ impl VersionManager {
     let objects = asset_index.get_unique_objects();
     for (obj, value) in objects {
       // let hash = obj.hash.to_string();
-      let downloadable = Box::new(AssetDownloadable::new(proxy.clone(), value, obj, "https://resources.download.minecraft.net/", &objects_dir));
-      // TODO: downloadable.set_expected_size(obj.size);
+      let downloadable = Box::new(
+        AssetDownloadable::new(proxy.create_http_client(), value, obj, "https://resources.download.minecraft.net/", &objects_dir)
+      );
+      downloadable.monitor.set_total(obj.size as usize);
       vec.push(downloadable);
     }
 
