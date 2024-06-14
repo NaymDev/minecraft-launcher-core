@@ -4,7 +4,7 @@ use chrono::Utc;
 use futures::future::join_all;
 use log::{ info, error, warn };
 
-use crate::{ MinecraftLauncherError, progress_reporter::ProgressReporter };
+use crate::{ bootstrap::MinecraftLauncherError, progress_reporter::ProgressReporter };
 
 use super::Downloadable;
 

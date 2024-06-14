@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use serde::{ Deserialize, Serialize };
 
-use crate::{ json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo }, MinecraftLauncherError };
+use crate::{ bootstrap::MinecraftLauncherError, json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo } };
 
 mod raw_version_list;
 

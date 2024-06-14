@@ -2,7 +2,7 @@ use std::{ ffi::OsStr, fs::{ canonicalize, File }, path::PathBuf };
 
 use serde::{ Deserialize, Serialize };
 
-use crate::{ json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, VersionInfo }, MinecraftLauncherError };
+use crate::json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, VersionInfo };
 
 use super::error::LoadVersionError;
 

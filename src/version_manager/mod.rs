@@ -14,14 +14,13 @@ use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
+  bootstrap::{ MinecraftGameRunner, MinecraftLauncherError },
   download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
   json::{
     manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, VersionManifest },
     MCVersion,
     VersionInfo,
   },
-  MinecraftGameRunner,
-  MinecraftLauncherError,
 };
 
 pub mod local;

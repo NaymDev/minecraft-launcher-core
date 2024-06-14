@@ -10,7 +10,7 @@ use logging::LoggingEntry;
 use rule::{ FeatureMatcher, OperatingSystem, Rule, RuleAction };
 use serde::{ Deserialize, Serialize };
 
-use crate::{ download_utils::{ Downloadable, ProxyOptions }, version_manager::VersionManager, MinecraftLauncherError };
+use crate::{ bootstrap::MinecraftLauncherError, download_utils::{ Downloadable, ProxyOptions }, version_manager::VersionManager };
 
 use super::{ Date, MCVersion, ReleaseType, VersionInfo };
 

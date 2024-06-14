@@ -1,10 +1,9 @@
 use crate::{
+  bootstrap::{ options::{ GameOptionsBuilder, LauncherOptions }, MinecraftGameRunner },
   download_utils::ProxyOptions,
   json::MCVersion,
-  options::{ GameOptionsBuilder, LauncherOptions },
   profile_manager::auth::OfflineUserAuthentication,
   progress_reporter::{ ProgressReporter, ProgressUpdate },
-  MinecraftGameRunner,
 };
 
 use std::{ env::temp_dir, path::PathBuf, sync::{ Mutex, Arc } };
