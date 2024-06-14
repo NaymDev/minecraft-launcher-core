@@ -7,6 +7,7 @@ use std::{
   ops::Deref,
 };
 
+use error::LoadVersionError;
 use local::LocalVersionInfo;
 use log::{ info, warn, error };
 use remote::{ RawVersionList, RemoteVersionInfo };
@@ -27,12 +28,14 @@ pub mod local;
 pub mod remote;
 pub mod error;
 
+type ArcMutex<T> = Arc<Mutex<T>>;
+
 #[derive(Debug)]
 pub struct VersionManager {
   pub game_dir: PathBuf,
   pub feature_matcher: Box<dyn FeatureMatcher + Send + Sync>,
-  remote_versions_cache: Arc<Mutex<Vec<RemoteVersionInfo>>>,
-  local_versions_cache: Arc<Mutex<Vec<LocalVersionInfo>>>,
+  remote_versions_cache: ArcMutex<Vec<RemoteVersionInfo>>,
+  local_versions_cache: ArcMutex<Vec<LocalVersionInfo>>,
 }
 
 impl VersionManager {
@@ -40,8 +43,8 @@ impl VersionManager {
     Self {
       game_dir,
       feature_matcher,
-      remote_versions_cache: Arc::new(Mutex::new(vec![])),
-      local_versions_cache: Arc::new(Mutex::new(vec![])),
+      remote_versions_cache: Arc::default(),
+      local_versions_cache: Arc::default(),
     }
   }
 
@@ -82,14 +85,18 @@ impl VersionManager {
 
         for version_id in dir_names {
           info!("Scanning local version versions/{}", &version_id);
-          let version_json = &versions_dir.join(&version_id).join(format!("{}.json", &version_id));
-          if !version_json.is_file() {
-            warn!("Version file not found! Skipping. (versions/{}/{}.json)", &version_id, &version_id);
-            continue;
-          }
-          match serde_json::from_reader(File::open(version_json)?) {
-            Ok(json) => local_versions_cache.lock().unwrap().push(json),
-            Err(e) => warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, e),
+          let version_dir = &versions_dir.join(&version_id);
+          match LocalVersionInfo::load(&version_dir) {
+            Ok(local_version) => {
+              local_versions_cache.lock().unwrap().push(local_version);
+            }
+            Err(LoadVersionError::ManifestNotFound) => {
+              warn!("Version file not found! Skipping. (versions/{}/{}.json)", &version_id, &version_id);
+            }
+            Err(LoadVersionError::ManifestParseError(e)) => {
+              warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, e);
+            }
+            Err(err) => warn!("Failed to load version: {}", err),
           }
         }
       }
