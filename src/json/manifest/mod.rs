@@ -1,207 +1,27 @@
+use std::{ collections::{ HashMap, HashSet }, path::{ PathBuf, MAIN_SEPARATOR_STR } };
+
+use argument::{ Argument, ArgumentType };
+use assets::AssetIndexInfo;
+use async_recursion::async_recursion;
+use download::{ DownloadInfo, DownloadType };
+use java::JavaVersionInfo;
+use library::Library;
+use logging::LoggingEntry;
+use rule::{ FeatureMatcher, OperatingSystem, Rule, RuleAction };
+use serde::{ Deserialize, Serialize };
+
+use crate::{ download_utils::{ Downloadable, ProxyOptions }, version_manager::VersionManager, MinecraftLauncherError };
+
+use super::{ Date, MCVersion, ReleaseType, VersionInfo };
+
+pub mod argument;
+pub mod assets;
+pub mod download;
+pub mod java;
+pub mod logging;
 pub mod rule;
 pub mod library;
-pub mod date;
 pub mod artifact;
-
-use std::{ collections::{ HashMap, HashSet }, io::Read, fmt::{ Debug, Display }, path::{ PathBuf, MAIN_SEPARATOR_STR } };
-
-use async_recursion::async_recursion;
-use reqwest::Client;
-use serde::{ Serialize, Deserialize };
-use sha1::{ Digest, Sha1 };
-
-use crate::{ MinecraftLauncherError, download_utils::{ Downloadable, ProxyOptions } };
-
-use self::{ rule::{ Rule, OperatingSystem, FeatureMatcher, RuleAction }, library::Library, date::Date };
-
-use super::{ info::{ ReleaseType, MCVersion, RemoteVersionInfo, VersionInfo }, VersionManager };
-
-const VERSION_MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RawVersionList {
-  pub latest: HashMap<ReleaseType, MCVersion>,
-  pub versions: Vec<RemoteVersionInfo>,
-}
-
-impl RawVersionList {
-  pub async fn fetch() -> Result<RawVersionList, reqwest::Error> {
-    Client::new().get(VERSION_MANIFEST_URL).send().await?.json::<RawVersionList>().await
-  }
-}
-
-//
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-#[serde(try_from = "String", into = "String")]
-pub struct Sha1Sum([u8; 20]);
-
-impl Sha1Sum {
-  pub fn new(value: [u8; 20]) -> Self {
-    Self(value)
-  }
-
-  pub fn from_reader<T: Read>(value: &mut T) -> Result<Self, Box<dyn std::error::Error>> {
-    let mut sha1_hasher = Sha1::new();
-    let mut buf = vec![];
-    value.read_to_end(&mut buf)?;
-    sha1_hasher.update(&buf);
-    Ok(Sha1Sum(sha1_hasher.finalize().into()))
-  }
-}
-
-impl TryFrom<String> for Sha1Sum {
-  type Error = String;
-  fn try_from(value: String) -> Result<Self, Self::Error> {
-    let mut buf = [0u8; 20];
-    hex::decode_to_slice(value, &mut buf).map_err(|e| e.to_string())?;
-    Ok(Sha1Sum(buf))
-  }
-}
-
-impl Into<String> for Sha1Sum {
-  fn into(self) -> String {
-    hex::encode(self.0)
-  }
-}
-
-impl Debug for Sha1Sum {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", hex::encode(self.0))
-  }
-}
-
-impl Display for Sha1Sum {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", hex::encode(self.0))
-  }
-}
-
-//
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum ArgumentType {
-  Game,
-  Jvm,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged, rename_all = "camelCase")]
-pub enum Argument {
-  Value(ArgumentValue),
-  Object {
-    rules: Vec<Rule>,
-    value: ArgumentValue,
-  },
-}
-
-impl Argument {
-  pub fn apply(&self, matcher: &impl FeatureMatcher) -> Option<Vec<&String>> {
-    if self.applies_to_current_environment(matcher) { Some(self.value()) } else { None }
-  }
-
-  pub fn value(&self) -> Vec<&String> {
-    match self {
-      Argument::Value(value) => value.value(),
-      Argument::Object { value, .. } => value.value(),
-    }
-  }
-
-  pub fn applies_to_current_environment(&self, matcher: &impl FeatureMatcher) -> bool {
-    match self {
-      Argument::Value(_) => true,
-      Argument::Object { rules, .. } => {
-        let mut action = RuleAction::Disallow;
-        for rule in rules {
-          if let Some(applied_action) = rule.get_applied_action(Some(matcher)) {
-            action = applied_action;
-          }
-        }
-
-        action == RuleAction::Allow
-      }
-    }
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ArgumentValue {
-  String(String),
-  List(Vec<String>),
-}
-
-impl ArgumentValue {
-  pub fn value(&self) -> Vec<&String> {
-    match self {
-      ArgumentValue::List(list) => list.iter().collect(),
-      ArgumentValue::String(string) => vec![string],
-    }
-  }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AssetIndexInfo {
-  pub id: String,
-  pub sha1: Sha1Sum,
-  pub size: i64,
-  pub total_size: i64,
-  pub url: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum DownloadType {
-  Client,
-  Server,
-  WindowsServer,
-  ClientMappings,
-  ServerMappings,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct DownloadInfo {
-  pub sha1: Sha1Sum,
-  pub size: i64,
-  pub url: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct JavaVersionInfo {
-  pub component: String,
-  pub major_version: i64,
-}
-
-impl Default for JavaVersionInfo {
-  fn default() -> Self {
-    Self {
-      component: format!("jre-legacy"),
-      major_version: 8,
-    }
-  }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct LoggingEntry {
-  pub argument: String, // "-Dlog4j.configurationFile=${path}"
-  pub file: LoggingEntryFile,
-  #[serde(rename = "type")]
-  pub log_type: String, // "log4j2-xml"
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct LoggingEntryFile {
-  pub id: String, // "client-1.12.xml" ("client-1.7.xml" for 1.10.2)
-  pub sha1: Sha1Sum,
-  pub size: i64,
-  pub url: String,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -240,24 +60,6 @@ pub struct LocalVersionInfo {
   updated_time: Date,
   #[serde(rename = "type")]
   release_type: ReleaseType,
-}
-
-impl VersionInfo for LocalVersionInfo {
-  fn get_id(&self) -> &MCVersion {
-    &self.id
-  }
-
-  fn get_type(&self) -> &ReleaseType {
-    &self.release_type
-  }
-
-  fn get_updated_time(&self) -> &Date {
-    &self.updated_time
-  }
-
-  fn get_release_time(&self) -> &Date {
-    &self.release_time
-  }
 }
 
 impl LocalVersionInfo {
@@ -428,11 +230,11 @@ impl LocalVersionInfo {
       // local_version.arguments = self.arguments.clone();
       for (arg_type, args) in &self.arguments {
         if let Some(vec) = local_version.arguments.get_mut(arg_type) {
-            vec.extend(args.clone());
+          vec.extend(args.clone());
         } else {
-            local_version.arguments.insert(arg_type.clone(), args.clone());
+          local_version.arguments.insert(arg_type.clone(), args.clone());
         }
-     }
+      }
     }
 
     if !self.compatibility_rules.is_empty() {
@@ -448,69 +250,20 @@ impl LocalVersionInfo {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AssetIndex {
-  pub objects: HashMap<String, AssetObject>,
-  #[serde(default)]
-  pub map_to_resources: bool,
-  #[serde(default, rename="virtual")]
-  pub is_virtual: bool
-}
-
-impl AssetIndex {
-  pub fn get_file_map(&self) -> HashMap<&String, &AssetObject> {
-    self.objects.iter().collect()
+impl VersionInfo for LocalVersionInfo {
+  fn get_id(&self) -> &MCVersion {
+    &self.id
   }
 
-  pub fn get_unique_objects(&self) -> HashMap<&AssetObject, &String> {
-    self.objects
-      .iter()
-      .map(|(k, v)| (v, k))
-      .collect()
-  }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "camelCase")]
-pub struct AssetObject {
-  pub hash: Sha1Sum,
-  pub size: u64,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub reconstruct: Option<bool>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub compressed_hash: Option<Sha1Sum>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub compressed_size: Option<u64>,
-}
-
-impl AssetObject {
-  pub fn has_compressed_alternative(&self) -> bool {
-    self.compressed_hash.is_some() && self.compressed_size.is_some()
+  fn get_type(&self) -> &ReleaseType {
+    &self.release_type
   }
 
-  pub fn create_path_from_hash(hash: &Sha1Sum) -> String {
-    let hash = hash.to_string();
-    format!("{}/{}", &hash[0..2], hash)
+  fn get_updated_time(&self) -> &Date {
+    &self.updated_time
   }
-}
 
-#[cfg(test)]
-mod tests {
-  use reqwest::Client;
-  use serde_json::Value;
-
-  use super::*;
-
-  #[tokio::test]
-  async fn test_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
-    let json: Value = Client::new().get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").send().await?.json().await?;
-    let versions = json["versions"].as_array().unwrap().to_vec();
-    for ver in versions {
-      let ver_id = ver["id"].as_str().unwrap();
-      let ver = MCVersion::from(ver_id.to_string());
-      assert_eq!(ver_id.to_string(), ver.to_string());
-    }
-    Ok(())
+  fn get_release_time(&self) -> &Date {
+    &self.release_time
   }
 }

@@ -5,7 +5,7 @@ use serde::{ Deserialize, Serialize };
 
 use crate::download_utils::{ ProxyOptions, Downloadable, ChecksummedDownloadable, PreHashedDownloadable };
 
-use super::{ rule::{ Rule, OperatingSystem, RuleAction, FeatureMatcher }, DownloadInfo, artifact::Artifact };
+use super::{ artifact::Artifact, rule::{ FeatureMatcher, OperatingSystem, Rule, RuleAction }, DownloadInfo };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

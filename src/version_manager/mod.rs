@@ -1,6 +1,3 @@
-pub mod info;
-pub mod json;
-
 use std::{
   path::{ PathBuf, MAIN_SEPARATOR_STR },
   fs::{ read_dir, File, create_dir_all, self },
@@ -11,18 +8,21 @@ use std::{
 };
 
 use log::{ info, warn, error };
+use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
-  MinecraftLauncherError,
-  download_utils::{ ProxyOptions, Downloadable, AssetDownloadable, download_job::DownloadJob, PreHashedDownloadable, EtagDownloadable },
+  download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
+  json::{
+    manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, LocalVersionInfo },
+    MCVersion,
+    VersionInfo,
+  },
   MinecraftGameRunner,
+  MinecraftLauncherError,
 };
 
-use self::{
-  info::{ RemoteVersionInfo, MCVersion, VersionInfo },
-  json::{ RawVersionList, LocalVersionInfo, rule::{ OperatingSystem, FeatureMatcher }, AssetIndex, DownloadType },
-};
+pub mod remote;
 
 #[derive(Debug)]
 pub struct VersionManager {
@@ -227,12 +227,14 @@ mod tests {
 
   use simple_logger::SimpleLogger;
 
+  use crate::json::manifest::rule::RuleFeatureType;
+
   use super::*;
 
   struct TestFeatureMatcher;
 
   impl FeatureMatcher for TestFeatureMatcher {
-    fn has_feature(&self, _feature_type: &json::rule::RuleFeatureType, _value: &serde_json::Value) -> bool {
+    fn has_feature(&self, _feature_type: &RuleFeatureType, _value: &serde_json::Value) -> bool {
       false
     }
   }

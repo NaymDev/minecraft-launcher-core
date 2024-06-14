@@ -1,9 +1,12 @@
 pub mod download_utils;
-pub mod versions;
+pub mod version_manager;
 pub mod profile_manager;
 pub mod options;
 pub mod process;
 pub mod progress_reporter;
+
+pub mod json;
+
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +22,11 @@ use std::{
 
 use chrono::{ Utc, Timelike };
 use download_utils::{ ProxyOptions, download_job::DownloadJob };
+use json::{
+  manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, LocalVersionInfo },
+  Sha1Sum,
+  VersionInfo,
+};
 use log::{ info, error, debug, warn };
 use options::{ GameOptions, MinecraftFeatureMatcher };
 use os_info::Type::Windows;
@@ -27,14 +35,10 @@ use progress_reporter::ProgressReporter;
 use regex::Regex;
 use serde_json::json;
 use thiserror::Error;
-use versions::{
-  VersionManager,
-  json::{ rule::{ FeatureMatcher, RuleFeatureType, OperatingSystem }, LocalVersionInfo, AssetIndex },
-  info::VersionInfo,
-};
+use version_manager::VersionManager;
 use zip::ZipArchive;
 
-use crate::{ versions::json::{ ArgumentType, library::ExtractRules, Sha1Sum }, process::GameProcessBuilder };
+use crate::{ process::GameProcessBuilder, json::manifest::rule::FeatureMatcher };
 
 #[derive(Error, Debug)]
 #[error("{0}")]

@@ -1,11 +1,7 @@
-use std::{ fmt::Debug, io::Cursor };
+use std::fmt::Debug;
 
 use regex::Regex;
 use serde::{ Deserialize, Serialize };
-
-use crate::MinecraftLauncherError;
-
-use super::json::{ LocalVersionInfo, Sha1Sum, date::Date };
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(untagged, from = "String", into = "String")]
@@ -195,104 +191,12 @@ impl Debug for MCVersion {
   }
 }
 
-//
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum ReleaseType {
-  Release,
-  Snapshot,
-  OldBeta,
-  OldAlpha,
-}
-
-impl ReleaseType {
-  pub fn get_name(&self) -> &str {
-    match self {
-      Self::Release => "release",
-      Self::Snapshot => "snapshot",
-      Self::OldBeta => "old_beta",
-      Self::OldAlpha => "old_alpha",
-    }
-  }
-}
-
-//
-
-pub trait VersionInfo {
-  fn get_id(&self) -> &MCVersion;
-  fn get_type(&self) -> &ReleaseType;
-  fn get_updated_time(&self) -> &Date;
-  fn get_release_time(&self) -> &Date;
-}
-
-//
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteVersionInfo {
-  id: MCVersion,
-  #[serde(rename = "type")]
-  release_type: ReleaseType,
-  url: String,
-  #[serde(rename = "time")]
-  updated_time: Date,
-  release_time: Date,
-  sha1: Sha1Sum,
-  compliance_level: u8,
-}
-
-impl RemoteVersionInfo {
-  pub fn get_url(&self) -> &str {
-    &self.url
-  }
-
-  pub fn get_sha1(&self) -> &Sha1Sum {
-    &self.sha1
-  }
-
-  pub fn get_compliance_level(&self) -> u8 {
-    self.compliance_level
-  }
-
-  pub async fn fetch(&self) -> Result<LocalVersionInfo, Box<dyn std::error::Error>> {
-    let bytes = reqwest::get(&self.url).await?.bytes().await?;
-    let sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
-    if sha1 != self.sha1 {
-      Err(MinecraftLauncherError(format!("Sha1 mismatch: {sha1} != {}", self.sha1)))?;
-    }
-    Ok(serde_json::from_slice(&bytes[..])?)
-  }
-}
-
-impl VersionInfo for RemoteVersionInfo {
-  fn get_id(&self) -> &MCVersion {
-    &self.id
-  }
-
-  fn get_type(&self) -> &ReleaseType {
-    &self.release_type
-  }
-
-  fn get_updated_time(&self) -> &Date {
-    &self.updated_time
-  }
-
-  fn get_release_time(&self) -> &Date {
-    &self.release_time
-  }
-}
-
-//
-
 #[cfg(test)]
 mod tests {
   use reqwest::Client;
   use serde_json::Value;
 
-  use crate::versions::json::RawVersionList;
-
-  use super::*;
+  use crate::{ json::{ MCVersion, VersionInfo }, version_manager::remote::{ RawVersionList, RemoteVersionInfo } };
 
   #[tokio::test]
   async fn test_version_id_parsing() -> Result<(), Box<dyn std::error::Error>> {
@@ -310,7 +214,7 @@ mod tests {
   async fn test_full_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
     let version_list = RawVersionList::fetch().await?;
     for ver in version_list.versions {
-      println!("Processing {}", ver.id.to_string());
+      println!("Processing {}", ver.get_id().to_string());
       let ver = ver.fetch().await?;
       println!("{ver:#?}");
     }

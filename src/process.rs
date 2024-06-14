@@ -1,6 +1,6 @@
 use std::{ process::{ Child, ChildStdout, ChildStderr, Command, Stdio }, io::BufReader, path::PathBuf, os::windows::process::CommandExt };
 
-use crate::versions::json::rule::OperatingSystem;
+use crate::json::manifest::rule::OperatingSystem;
 
 pub struct GameProcess {
   child: Child,

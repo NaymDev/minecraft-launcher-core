@@ -1,9 +1,9 @@
 use crate::{
   download_utils::ProxyOptions,
-  options::{ LauncherOptions, GameOptionsBuilder },
+  json::MCVersion,
+  options::{ GameOptionsBuilder, LauncherOptions },
   profile_manager::auth::OfflineUserAuthentication,
   progress_reporter::{ ProgressReporter, ProgressUpdate },
-  versions::info::MCVersion,
   MinecraftGameRunner,
 };
 

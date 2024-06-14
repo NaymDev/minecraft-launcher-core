@@ -4,8 +4,8 @@ use derive_builder::Builder;
 use serde_json::Value;
 
 use crate::{
-  versions::{ info::MCVersion, json::rule::{ FeatureMatcher, RuleFeatureType } },
   download_utils::ProxyOptions,
+  json::{ manifest::rule::{ FeatureMatcher, RuleFeatureType }, MCVersion },
   profile_manager::auth::UserAuthentication,
   progress_reporter::ProgressReporter,
 };

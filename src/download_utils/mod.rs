@@ -14,7 +14,7 @@ use libflate::non_blocking::gzip;
 use log::{ info, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy, Url };
 
-use crate::{ versions::json::{ Sha1Sum, AssetObject }, MinecraftLauncherError, progress_reporter::ProgressReporter };
+use crate::{ json::{ manifest::assets::AssetObject, Sha1Sum }, progress_reporter::ProgressReporter, MinecraftLauncherError };
 
 #[derive(Debug, Clone, Default)]
 pub enum ProxyOptions {
