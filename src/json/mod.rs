@@ -8,6 +8,6 @@ pub mod manifest;
 
 pub use minecraft_version::MCVersion;
 pub use date::Date;
-pub use sha1_checksum::Sha1Sum;
+pub use sha1_checksum::{ Sha1Sum, Sha1SumError };
 pub use release_type::ReleaseType;
 pub use version_info::VersionInfo;
