@@ -21,6 +21,24 @@ pub struct LocalVersionInfo {
 }
 
 impl LocalVersionInfo {
+  /// Creates a new instance of the object.
+  ///
+  /// # Arguments
+  /// * `version_manifest` - A reference to a `VersionManifest` containing metadata about the version.
+  /// * `manifest_path` - A reference to a `PathBuf` that specifies the path to the manifest file.
+  ///
+  /// # Returns
+  /// Returns a new instance of the object initialized with values from `version_manifest` and `manifest_path`.
+  pub fn new(version_manifest: &VersionManifest, manifest_path: &PathBuf) -> Self {
+    Self {
+      id: version_manifest.get_id().clone(),
+      release_type: version_manifest.get_type().clone(),
+      updated_time: version_manifest.get_updated_time().clone(),
+      release_time: version_manifest.get_release_time().clone(),
+      manifest_path: manifest_path.clone(),
+    }
+  }
+
   /// Load a version from the given path.
   /// It's meant to be used with the versions/{version_id} directory.
   /// # Errors
