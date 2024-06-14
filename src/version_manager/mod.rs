@@ -25,6 +25,7 @@ use crate::{
 
 pub mod local;
 pub mod remote;
+pub mod error;
 
 #[derive(Debug)]
 pub struct VersionManager {
