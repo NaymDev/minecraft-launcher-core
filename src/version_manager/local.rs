@@ -8,6 +8,7 @@ use super::error::LoadVersionError;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+/// A simplified representation of a ManifestVersion.
 pub struct LocalVersionInfo {
   id: MCVersion,
   #[serde(rename = "type")]
@@ -20,6 +21,10 @@ pub struct LocalVersionInfo {
 }
 
 impl LocalVersionInfo {
+  /// Load a version from the given path.
+  /// It's meant to be used with the versions/{version_id} directory.
+  /// # Errors
+  /// Will return an error if the directory version is not valid.
   pub fn load(version_dir: &PathBuf) -> Result<Self, LoadVersionError> {
     let version_dir = canonicalize(version_dir).map_err(|_| LoadVersionError::InvalidVersionDir)?;
     if !version_dir.is_dir() {
@@ -33,6 +38,9 @@ impl LocalVersionInfo {
     Self::from_manifest(&manifest_path)
   }
 
+  /// Load a version from the given manifest path.
+  /// # Errors
+  /// Will return an error if the manifest file is not found.
   pub fn from_manifest(manifest_path: &PathBuf) -> Result<Self, LoadVersionError> {
     let file = File::open(manifest_path)?;
     let manifest: VersionManifest = serde_json::from_reader(file)?;
@@ -49,8 +57,13 @@ impl LocalVersionInfo {
     &self.manifest_path
   }
 
-  pub fn load_manifest(&self) -> Result<VersionManifest, Box<dyn std::error::Error>> {
-    Ok(serde_json::from_reader(File::open(&self.manifest_path)?)?)
+  /// Get the full manifest of the version.
+  pub fn load_manifest(&self) -> Result<VersionManifest, LoadVersionError> {
+    if !self.manifest_path.is_file() {
+      return Err(LoadVersionError::ManifestNotFound);
+    }
+    let file = File::open(&self.manifest_path)?;
+    Ok(serde_json::from_reader(file)?)
   }
 }
 

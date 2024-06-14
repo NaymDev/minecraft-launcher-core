@@ -38,6 +38,15 @@ pub struct VersionManager {
 }
 
 impl VersionManager {
+  /// Creates a new instance of the object.
+  ///
+  /// # Arguments
+  /// * `game_dir` - A `PathBuf` that specifies the directory where the game data is stored.
+  /// * `feature_matcher` - A boxed `FeatureMatcher` trait object that allows matching features.
+  ///   This object must be thread-safe as indicated by the `Send + Sync` bounds.
+  ///
+  /// # Returns
+  /// Returns a new instance of `Self`.
   pub fn new(game_dir: PathBuf, feature_matcher: Box<dyn FeatureMatcher + Send + Sync>) -> Self {
     Self {
       game_dir,
@@ -47,6 +56,16 @@ impl VersionManager {
     }
   }
 
+  /// Retrieves a list of local version information.
+  ///
+  /// This function locks the internal cache of local versions and returns a clone of the data.
+  /// The lock is held for the duration of the `to_vec()` operation to ensure thread safety.
+  ///
+  /// # Returns
+  /// A vector of `LocalVersionInfo` containing the details of local versions.
+  ///
+  /// # Panics
+  /// Panics if the lock on the cache cannot be acquired.
   pub fn get_local_versions(&self) -> Vec<LocalVersionInfo> {
     let mutex_guard = self.local_versions_cache.lock().unwrap();
     mutex_guard.to_vec()
@@ -56,7 +75,9 @@ impl VersionManager {
     let mutex_guard = self.remote_versions_cache.lock().unwrap();
     mutex_guard.to_vec()
   }
+}
 
+impl VersionManager {
   pub async fn refresh(&self) -> Result<(), Box<dyn std::error::Error>> {
     self.refresh_remote_versions().await?;
     self.refresh_local_versions()?;
@@ -105,7 +126,10 @@ impl VersionManager {
     }
     Ok(())
   }
+}
 
+impl VersionManager {
+  /// Returns true if all version required files are present in the game directory
   fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
     let required_files = local.get_required_files(os, self.feature_matcher.deref());
     !required_files
