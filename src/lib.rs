@@ -122,7 +122,7 @@ impl MinecraftGameRunner {
 
     self.progress_reporter().set_status("Resolving local version").set_progress(1);
     let mut local_version = match self.version_manager.get_local_version(&self.options.version) {
-      Some(local_version) => local_version,
+      Some(local_version) => local_version.load_manifest()?,
       None => { self.version_manager.install_version(&self.options.version).await? }
     };
 

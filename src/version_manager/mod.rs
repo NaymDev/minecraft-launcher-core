@@ -7,6 +7,7 @@ use std::{
   ops::Deref,
 };
 
+use local::LocalVersionInfo;
 use log::{ info, warn, error };
 use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
@@ -22,6 +23,7 @@ use crate::{
   MinecraftLauncherError,
 };
 
+pub mod local;
 pub mod remote;
 
 #[derive(Debug)]
@@ -29,7 +31,7 @@ pub struct VersionManager {
   pub game_dir: PathBuf,
   pub feature_matcher: Box<dyn FeatureMatcher + Send + Sync>,
   remote_versions_cache: Arc<Mutex<Vec<RemoteVersionInfo>>>,
-  local_versions_cache: Arc<Mutex<Vec<VersionManifest>>>,
+  local_versions_cache: Arc<Mutex<Vec<LocalVersionInfo>>>,
 }
 
 impl VersionManager {
@@ -42,7 +44,7 @@ impl VersionManager {
     }
   }
 
-  pub fn get_local_versions(&self) -> Vec<VersionManifest> {
+  pub fn get_local_versions(&self) -> Vec<LocalVersionInfo> {
     let mutex_guard = self.local_versions_cache.lock().unwrap();
     mutex_guard.to_vec()
   }
@@ -113,7 +115,7 @@ impl VersionManager {
       .cloned()
   }
 
-  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<VersionManifest> {
+  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<LocalVersionInfo> {
     self.local_versions_cache
       .lock()
       .unwrap()
@@ -122,7 +124,7 @@ impl VersionManager {
       .cloned()
   }
 
-  pub async fn is_up_to_date(/*mut*/ &self, local_version: &VersionManifest) -> bool {
+  pub async fn is_up_to_date(&self, local_version: &VersionManifest) -> bool {
     if let Some(remote_version) = self.get_remote_version(local_version.get_id()) {
       if remote_version.get_updated_time().inner() > local_version.get_updated_time().inner() {
         return false;
@@ -146,14 +148,15 @@ impl VersionManager {
       .get_remote_version(version_id)
       .ok_or(MinecraftLauncherError(format!("Version not found in remote list: {}", &version_id.to_string())))?;
 
-    let local_version = remote_version.fetch().await?;
-    let target_dir = &self.game_dir.join("versions").join(&local_version.get_id().to_string());
+    let version_manifest = remote_version.fetch().await?;
+    let target_dir = &self.game_dir.join("versions").join(&version_manifest.get_id().to_string());
     create_dir_all(&target_dir)?;
-    let target_json = target_dir.join(format!("{}.json", &local_version.get_id().to_string()));
-    serde_json::to_writer_pretty(&File::create(&target_json)?, &local_version)?;
+    let target_json = target_dir.join(format!("{}.json", &version_manifest.get_id().to_string()));
+    serde_json::to_writer_pretty(&File::create(&target_json)?, &version_manifest)?;
 
-    self.local_versions_cache.lock().unwrap().push(local_version);
-    Ok(self.get_local_version(version_id).unwrap())
+    let local_version_info = LocalVersionInfo::from_manifest(&target_json)?;
+    self.local_versions_cache.lock().unwrap().push(local_version_info);
+    Ok(version_manifest)
   }
 
   pub fn download_version(
@@ -247,7 +250,7 @@ mod tests {
     info!("{:#?}", version_manager.local_versions_cache);
     let local = version_manager.get_local_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
     if let Some(local) = local {
-      let resolved = local.clone().resolve(&mut version_manager, HashSet::new()).await?;
+      let resolved = local.clone().load_manifest()?.resolve(&mut version_manager, HashSet::new()).await?;
       info!("Resolved: {:#?}", resolved);
     }
     Ok(())
