@@ -6,9 +6,10 @@ use serde_json::Value;
 use crate::{
   download_utils::ProxyOptions,
   json::{ manifest::rule::{ FeatureMatcher, RuleFeatureType }, MCVersion },
-  profile_manager::auth::UserAuthentication,
   progress_reporter::ProgressReporter,
 };
+
+use super::auth::UserAuthentication;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MinecraftResolution(u32, u32);
@@ -49,7 +50,7 @@ pub struct GameOptions {
   #[builder(default)]
   pub resolution: Option<MinecraftResolution>,
   pub java_path: PathBuf,
-  pub authentication: Box<dyn UserAuthentication + Send + Sync>,
+  pub authentication: UserAuthentication,
   #[builder(default)]
   pub launcher_options: Option<LauncherOptions>,
   #[builder(default)]

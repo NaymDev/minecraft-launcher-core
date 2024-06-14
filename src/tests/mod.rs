@@ -1,8 +1,7 @@
 use crate::{
-  bootstrap::{ options::{ GameOptionsBuilder, LauncherOptions }, GameBootstrap },
+  bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions }, GameBootstrap },
   download_utils::ProxyOptions,
   json::MCVersion,
-  profile_manager::auth::OfflineUserAuthentication,
   progress_reporter::{ ProgressReporter, ProgressUpdate },
 };
 
@@ -18,7 +17,6 @@ use log4rs::{
   encode::pattern::PatternEncoder,
   Config,
 };
-use uuid::Uuid;
 
 #[derive(Debug)]
 struct StartupTrigger {
@@ -133,7 +131,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .game_dir(game_dir)
     .proxy(ProxyOptions::NoProxy)
     .java_path(PathBuf::from("C:/Program Files/Eclipse Adoptium/jdk-17.0.6.10-hotspot/bin/java.exe"))
-    .authentication(Box::new(OfflineUserAuthentication { username: "MonkeyKiller_".to_string(), uuid: Uuid::nil() }))
+    .authentication(UserAuthentication::offline("MonkeyKiller_"))
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
     .progress_reporter(reporter)
     .build()?;

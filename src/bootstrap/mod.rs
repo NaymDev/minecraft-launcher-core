@@ -36,6 +36,7 @@ use crate::{
   version_manager::VersionManager,
 };
 
+pub mod auth;
 pub mod options;
 pub mod process;
 pub mod argument_substitutor;
@@ -316,9 +317,8 @@ impl GameBootstrap {
     {
       // Remove token from args
       let mut args = game_process_builder.get_args().join(" ");
-      let token = self.options.authentication.get_authenticated_token();
-      if !token.is_empty() {
-        args = args.replace(&token, "?????");
+      if let Some(token) = &self.options.authentication.access_token {
+        args = args.replace(token, "?????");
       }
       debug!("Running {} {}", &self.options.java_path.display(), args);
     }
@@ -508,13 +508,14 @@ impl GameBootstrap {
       map
     };
 
+    let auth = &self.options.authentication;
     substitutor
-      .add("auth_access_token", self.options.authentication.get_authenticated_token())
-      .add("auth_session", self.options.authentication.get_auth_session())
+      .add("auth_access_token", auth.access_token())
+      .add("auth_session", auth.auth_session())
 
-      .add("auth_player_name", self.options.authentication.auth_player_name())
-      .add("auth_uuid", self.options.authentication.auth_uuid().to_string())
-      .add("user_type", self.options.authentication.user_type());
+      .add("auth_player_name", &auth.username)
+      .add("auth_uuid", auth.uuid.to_string())
+      .add("user_type", auth.user_type());
 
     substitutor
       .add("profile_name", "")
@@ -548,13 +549,12 @@ impl GameBootstrap {
       .add("classpath_separator", classpath_separator)
       .add("primary_jar", jar_path.to_str().unwrap());
 
-    substitutor
-      .add("clientid", "") // TODO: figure out
-      .add("auth_xuid", ""); // TODO: only for msa
+    substitutor.add("clientid", ""); // TODO: figure out
+    substitutor.add("auth_xuid", auth.xuid().unwrap_or_default());
 
     substitutor.add("library_directory", &libraries_dir.to_str().unwrap()); // Forge compatibility
 
-    substitutor.add_all(self.options.authentication.get_extra_substitutors());
+    // substitutor.add_all(self.options.authentication.get_extra_substitutors());
     substitutor.add_all(self.options.substitutor_overrides.clone()); // Override if needed
 
     substitutor.build()
