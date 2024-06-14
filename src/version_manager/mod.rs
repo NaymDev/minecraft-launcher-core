@@ -14,7 +14,7 @@ use reqwest::Client;
 use crate::{
   download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
   json::{
-    manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, LocalVersionInfo },
+    manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, VersionManifest },
     MCVersion,
     VersionInfo,
   },
@@ -29,7 +29,7 @@ pub struct VersionManager {
   pub game_dir: PathBuf,
   pub feature_matcher: Box<dyn FeatureMatcher + Send + Sync>,
   remote_versions_cache: Arc<Mutex<Vec<RemoteVersionInfo>>>,
-  local_versions_cache: Arc<Mutex<Vec<LocalVersionInfo>>>,
+  local_versions_cache: Arc<Mutex<Vec<VersionManifest>>>,
 }
 
 impl VersionManager {
@@ -42,7 +42,7 @@ impl VersionManager {
     }
   }
 
-  pub fn get_local_versions(&self) -> Vec<LocalVersionInfo> {
+  pub fn get_local_versions(&self) -> Vec<VersionManifest> {
     let mutex_guard = self.local_versions_cache.lock().unwrap();
     mutex_guard.to_vec()
   }
@@ -96,7 +96,7 @@ impl VersionManager {
     Ok(())
   }
 
-  fn has_all_files(&self, local: &LocalVersionInfo, os: &OperatingSystem) -> bool {
+  fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
     let required_files = local.get_required_files(os, self.feature_matcher.deref());
     !required_files
       .iter()
@@ -113,7 +113,7 @@ impl VersionManager {
       .cloned()
   }
 
-  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<LocalVersionInfo> {
+  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<VersionManifest> {
     self.local_versions_cache
       .lock()
       .unwrap()
@@ -122,7 +122,7 @@ impl VersionManager {
       .cloned()
   }
 
-  pub async fn is_up_to_date(/*mut*/ &self, local_version: &LocalVersionInfo) -> bool {
+  pub async fn is_up_to_date(/*mut*/ &self, local_version: &VersionManifest) -> bool {
     if let Some(remote_version) = self.get_remote_version(local_version.get_id()) {
       if remote_version.get_updated_time().inner() > local_version.get_updated_time().inner() {
         return false;
@@ -141,7 +141,7 @@ impl VersionManager {
     }
   }
 
-  pub async fn install_version(&self, version_id: &MCVersion) -> Result<LocalVersionInfo, Box<dyn std::error::Error>> {
+  pub async fn install_version(&self, version_id: &MCVersion) -> Result<VersionManifest, Box<dyn std::error::Error>> {
     let remote_version = &self
       .get_remote_version(version_id)
       .ok_or(MinecraftLauncherError(format!("Version not found in remote list: {}", &version_id.to_string())))?;
@@ -159,7 +159,7 @@ impl VersionManager {
   pub fn download_version(
     &self,
     game_runner: &MinecraftGameRunner,
-    local_version: &LocalVersionInfo,
+    local_version: &VersionManifest,
     download_job: &mut DownloadJob
   ) -> Result<(), Box<dyn std::error::Error>> {
     download_job.add_downloadables(
@@ -191,7 +191,7 @@ impl VersionManager {
     &self,
     proxy: &ProxyOptions,
     game_dir: &PathBuf,
-    local_version: &LocalVersionInfo
+    local_version: &VersionManifest
   ) -> Result<Vec<Box<dyn Downloadable + Send + Sync>>, Box<dyn std::error::Error>> {
     let assets_dir = game_dir.join("assets");
     let objects_dir = assets_dir.join("objects");

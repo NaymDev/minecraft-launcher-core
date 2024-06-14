@@ -25,7 +25,7 @@ pub mod artifact;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct LocalVersionInfo {
+pub struct VersionManifest {
   #[serde(default, skip_serializing_if = "HashMap::is_empty")]
   pub arguments: HashMap<ArgumentType, Vec<Argument>>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,7 +62,7 @@ pub struct LocalVersionInfo {
   release_type: ReleaseType,
 }
 
-impl LocalVersionInfo {
+impl VersionManifest {
   pub fn get_relevant_libraries(&self, matcher: &dyn FeatureMatcher) -> Vec<&Library> {
     self.libraries
       .iter()
@@ -165,7 +165,7 @@ impl LocalVersionInfo {
     &self,
     version_manager: &VersionManager,
     mut inheritance_trace: HashSet<&'async_recursion MCVersion>
-  ) -> Result<LocalVersionInfo, Box<dyn std::error::Error>> {
+  ) -> Result<VersionManifest, Box<dyn std::error::Error>> {
     if self.inherits_from.as_ref().is_none() {
       return Ok(self.clone());
     }
@@ -179,7 +179,7 @@ impl LocalVersionInfo {
       Err(MinecraftLauncherError(format!("Circular dependency detected! {} -> [{}]", trace.join(" -> "), self.id.to_string())))?;
     }
 
-    let local_version: LocalVersionInfo = if let Some(local_version) = version_manager.get_local_version(inherits_from) {
+    let local_version: VersionManifest = if let Some(local_version) = version_manager.get_local_version(inherits_from) {
       let local_version = local_version.clone();
       if !version_manager.is_up_to_date(&local_version).await {
         version_manager.install_version(inherits_from).await?.clone()
@@ -250,7 +250,7 @@ impl LocalVersionInfo {
   }
 }
 
-impl VersionInfo for LocalVersionInfo {
+impl VersionInfo for VersionManifest {
   fn get_id(&self) -> &MCVersion {
     &self.id
   }

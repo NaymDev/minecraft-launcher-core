@@ -23,7 +23,7 @@ use std::{
 use chrono::{ Utc, Timelike };
 use download_utils::{ ProxyOptions, download_job::DownloadJob };
 use json::{
-  manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, LocalVersionInfo },
+  manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, VersionManifest },
   Sha1Sum,
   VersionInfo,
 };
@@ -53,7 +53,7 @@ pub struct MinecraftGameRunner {
   options: GameOptions,
   feature_matcher: Box<MinecraftFeatureMatcher>,
   version_manager: VersionManager,
-  local_version: Option<LocalVersionInfo>,
+  local_version: Option<VersionManifest>,
 
   natives_dir: Option<PathBuf>,
   virtual_dir: Option<PathBuf>,
@@ -75,7 +75,7 @@ impl MinecraftGameRunner {
     }
   }
 
-  fn get_local_version(&self) -> &LocalVersionInfo {
+  fn get_local_version(&self) -> &VersionManifest {
     self.local_version.as_ref().unwrap()
   }
 
@@ -146,7 +146,7 @@ impl MinecraftGameRunner {
     self.launch_game().await
   }
 
-  async fn download_required_files(&self, local_version: &LocalVersionInfo) -> Result<(), Box<dyn std::error::Error>> {
+  async fn download_required_files(&self, local_version: &VersionManifest) -> Result<(), Box<dyn std::error::Error>> {
     let mut job1 = DownloadJob::new(
       "Version & Libraries",
       false,
@@ -560,7 +560,7 @@ impl MinecraftGameRunner {
     substitutor.build()
   }
 
-  fn construct_classpath(&self, local_version: &LocalVersionInfo) -> Result<String, MinecraftLauncherError> {
+  fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, MinecraftLauncherError> {
     let os = OperatingSystem::get_current_platform();
     let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
     let classpath = local_version.get_classpath(&os, &self.options.game_dir, self.feature_matcher.deref());

@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use serde::{ Deserialize, Serialize };
 
-use crate::{ json::{ manifest::LocalVersionInfo, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo }, MinecraftLauncherError };
+use crate::{ json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo }, MinecraftLauncherError };
 
 mod raw_version_list;
 
@@ -35,7 +35,7 @@ impl RemoteVersionInfo {
     self.compliance_level
   }
 
-  pub async fn fetch(&self) -> Result<LocalVersionInfo, Box<dyn std::error::Error>> {
+  pub async fn fetch(&self) -> Result<VersionManifest, Box<dyn std::error::Error>> {
     let bytes = reqwest::get(&self.url).await?.bytes().await?;
     let sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
     if sha1 != self.sha1 {
