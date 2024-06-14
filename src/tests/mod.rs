@@ -126,11 +126,12 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     })
   };
 
+  let java_path = PathBuf::from(env!("JAVA_HOME")).join("bin").join("java.exe");
   let game_options = GameOptionsBuilder::default()
-    .version(MCVersion::new("1.20.1-forge-47.2.0"))
+    .version(MCVersion::new("1.20.1"))
     .game_dir(game_dir)
     .proxy(ProxyOptions::NoProxy)
-    .java_path(PathBuf::from("C:/Program Files/Eclipse Adoptium/jdk-17.0.6.10-hotspot/bin/java.exe"))
+    .java_path(java_path)
     .authentication(UserAuthentication::offline("MonkeyKiller_"))
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
     .progress_reporter(reporter)
