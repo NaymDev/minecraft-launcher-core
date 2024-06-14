@@ -14,7 +14,7 @@ use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
-  bootstrap::{ GameBootstrap, MinecraftLauncherError },
+  bootstrap::GameBootstrap,
   download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
   json::{
     manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, VersionManifest },
@@ -234,6 +234,13 @@ impl VersionManager {
     } else {
       true
     }
+  }
+
+  pub async fn install_version_by_id(&self, version_id: &MCVersion) -> Result<VersionManifest, InstallVersionError> {
+    if let Some(remote_version) = self.get_remote_version(version_id) {
+      return self.install_version(&remote_version).await;
+    }
+    Err(InstallVersionError::VersionNotFound(version_id.to_string()))
   }
 
   /// Installs a specific game version based on the provided remote version information.

@@ -182,12 +182,12 @@ impl VersionManifest {
     let local_version: VersionManifest = if let Some(local_version) = version_manager.get_local_version(inherits_from) {
       let local_version = local_version.load_manifest()?;
       if !version_manager.is_up_to_date(&local_version).await {
-        version_manager.install_version(inherits_from).await?.clone()
+        version_manager.install_version_by_id(inherits_from).await?.clone()
       } else {
         local_version
       }
     } else {
-      version_manager.install_version(inherits_from).await?.clone()
+      version_manager.install_version_by_id(inherits_from).await?.clone()
     };
 
     let mut local_version = local_version.resolve(version_manager, inheritance_trace).await?;

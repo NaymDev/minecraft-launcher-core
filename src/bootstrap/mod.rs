@@ -123,7 +123,7 @@ impl GameBootstrap {
     self.progress_reporter().set_status("Resolving local version").set_progress(1);
     let mut local_version = match self.version_manager.get_local_version(&self.options.version) {
       Some(local_version) => local_version.load_manifest()?,
-      None => { self.version_manager.install_version(&self.options.version).await? }
+      None => { self.version_manager.install_version_by_id(&self.options.version).await? }
     };
 
     if !local_version.applies_to_current_environment(self.feature_matcher.deref()) {
@@ -133,7 +133,7 @@ impl GameBootstrap {
     }
 
     if !self.version_manager.is_up_to_date(&local_version).await {
-      local_version = self.version_manager.install_version(&self.options.version).await?;
+      local_version = self.version_manager.install_version_by_id(&self.options.version).await?;
     }
 
     local_version = local_version.resolve(&self.version_manager, HashSet::new()).await?;
