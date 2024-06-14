@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use reqwest::Client;
 use serde::{ Deserialize, Serialize };
 
-use crate::json::{ MCVersion, ReleaseType };
+use crate::{ json::{ MCVersion, ReleaseType }, version_manager::error::LoadVersionError };
 
 use super::RemoteVersionInfo;
 
@@ -16,8 +16,9 @@ pub struct RawVersionList {
 }
 
 impl RawVersionList {
-  pub async fn fetch() -> Result<RawVersionList, reqwest::Error> {
-    Client::new().get(VERSION_MANIFEST_URL).send().await?.json::<RawVersionList>().await
+  /// Fetches the version manifest from Mojang's servers.
+  pub async fn fetch() -> Result<RawVersionList, LoadVersionError> {
+    Ok(Client::new().get(VERSION_MANIFEST_URL).send().await?.json::<RawVersionList>().await?)
   }
 }
 

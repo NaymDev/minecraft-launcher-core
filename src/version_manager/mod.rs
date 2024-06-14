@@ -7,7 +7,7 @@ use std::{
   ops::Deref,
 };
 
-use error::LoadVersionError;
+use error::{ InstallVersionError, LoadVersionError };
 use local::LocalVersionInfo;
 use log::{ info, warn, error };
 use remote::{ RawVersionList, RemoteVersionInfo };
@@ -71,20 +71,84 @@ impl VersionManager {
     mutex_guard.to_vec()
   }
 
+  /// Retrieves a list of remote version information.
+  ///
+  /// This function locks the internal cache of remote versions and returns a clone of the data.
+  /// The lock is held for the duration of the `to_vec()` operation to ensure thread safety.
+  ///
+  /// # Returns
+  /// A vector of `RemoteVersionInfo` containing the details of remote versions.
+  ///
+  /// # Panics
+  /// Panics if the lock on the cache cannot be acquired.
   pub fn get_remote_versions(&self) -> Vec<RemoteVersionInfo> {
     let mutex_guard = self.remote_versions_cache.lock().unwrap();
     mutex_guard.to_vec()
   }
+
+  /// Retrieves the remote version information based on the provided version identifier.
+  ///
+  /// This function searches through a cached list of remote versions, attempting to find
+  /// a version that matches the given `version_id`. If found, it returns a clone of the
+  /// `RemoteVersionInfo` associated with that version.
+  ///
+  /// # Arguments
+  /// * `version_id` - A reference to the `MCVersion` identifier for which the remote version info is sought.
+  ///
+  /// # Returns
+  /// An `Option<RemoteVersionInfo>` which is `Some` if the version is found, otherwise `None`.
+  ///
+  /// # Panics
+  /// This function will panic if the lock on the cache cannot be acquired.
+  pub fn get_remote_version(&self, version_id: &MCVersion) -> Option<RemoteVersionInfo> {
+    self.remote_versions_cache
+      .lock()
+      .unwrap()
+      .iter()
+      .find(|v| v.get_id() == version_id)
+      .cloned()
+  }
+
+  /// Retrieves the local version information based on the provided version identifier.
+  ///
+  /// This function searches through a cached list of local versions, attempting to find
+  /// a version that matches the given `version_id`. If found, it returns a clone of the
+  /// `LocalVersionInfo` associated with that version.
+  ///
+  /// # Arguments
+  /// * `version_id` - A reference to the `MCVersion` identifier for which the local version info is sought.
+  ///
+  /// # Returns
+  /// An `Option<LocalVersionInfo>` which is `Some` if the version is found, otherwise `None`.
+  ///
+  /// # Panics
+  /// This function will panic if the lock on the cache cannot be acquired.
+  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<LocalVersionInfo> {
+    self.local_versions_cache
+      .lock()
+      .unwrap()
+      .iter()
+      .find(|v| v.get_id() == version_id)
+      .cloned()
+  }
 }
 
 impl VersionManager {
-  pub async fn refresh(&self) -> Result<(), Box<dyn std::error::Error>> {
+  /// Refreshes both remote and local versions.
+  ///
+  /// This function first refreshes the remote versions and then the local versions.
+  /// It will return an error if any of the refresh operations fail.
+  ///
+  /// # Errors
+  /// Returns `LoadVersionError` if there is an issue loading either the remote or local versions.
+  pub async fn refresh(&self) -> Result<(), LoadVersionError> {
+    // TODO: refresh both at the same time
     self.refresh_remote_versions().await?;
     self.refresh_local_versions()?;
     Ok(())
   }
 
-  async fn refresh_remote_versions(&self) -> Result<(), Box<dyn std::error::Error>> {
+  async fn refresh_remote_versions(&self) -> Result<(), LoadVersionError> {
     let remote_versions_cache = Arc::clone(&self.remote_versions_cache);
     remote_versions_cache.lock().unwrap().clear();
     let RawVersionList { versions, .. } = RawVersionList::fetch().await?;
@@ -92,7 +156,7 @@ impl VersionManager {
     Ok(())
   }
 
-  fn refresh_local_versions(&self) -> Result<(), Box<dyn std::error::Error>> {
+  fn refresh_local_versions(&self) -> Result<(), LoadVersionError> {
     let local_versions_cache = Arc::clone(&self.local_versions_cache);
     local_versions_cache.lock().unwrap().clear();
 
@@ -138,55 +202,70 @@ impl VersionManager {
       .is_none()
   }
 
-  pub fn get_remote_version(&self, version_id: &MCVersion) -> Option<RemoteVersionInfo> {
-    self.remote_versions_cache
-      .lock()
-      .unwrap()
-      .iter()
-      .find(|v| v.get_id() == version_id)
-      .cloned()
-  }
-
-  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<LocalVersionInfo> {
-    self.local_versions_cache
-      .lock()
-      .unwrap()
-      .iter()
-      .find(|v| v.get_id() == version_id)
-      .cloned()
-  }
-
-  pub async fn is_up_to_date(&self, local_version: &VersionManifest) -> bool {
-    if let Some(remote_version) = self.get_remote_version(local_version.get_id()) {
-      if remote_version.get_updated_time().inner() > local_version.get_updated_time().inner() {
+  /// Checks if the local version is up-to-date with the remote version.
+  ///
+  /// This function compares the update time of the local version against the remote version.
+  /// If the remote version is newer, it returns false. Otherwise, it checks if all necessary
+  /// files for the version are present and accessible on the current operating system.
+  ///
+  /// # Arguments
+  /// * `version_manifest` - A reference to the `VersionManifest` that contains metadata about the version.
+  ///
+  /// # Returns
+  /// Returns `true` if the local version is up-to-date and all files are present, otherwise `false`.
+  ///
+  /// # Errors
+  /// Logs an error if the version resolution fails.
+  pub async fn is_up_to_date(&self, version_manifest: &VersionManifest) -> bool {
+    if let Some(remote_version) = self.get_remote_version(version_manifest.get_id()) {
+      if remote_version.get_updated_time().inner() > version_manifest.get_updated_time().inner() {
         return false;
       }
-      let resolved = match local_version.resolve(self, HashSet::new()).await {
-        Ok(resolved) => resolved,
-        Err(_) => {
-          error!("Failed to resolve version {}", local_version.get_id().to_string());
-          local_version.clone()
-        }
-      };
 
-      return self.has_all_files(&resolved, &OperatingSystem::get_current_platform());
+      match version_manifest.resolve(self, HashSet::new()).await {
+        Ok(resolved) => {
+          return self.has_all_files(&resolved, &OperatingSystem::get_current_platform());
+        }
+        Err(_) => {
+          error!("Failed to resolve version {}", version_manifest.get_id().to_string());
+          return self.has_all_files(version_manifest, &OperatingSystem::get_current_platform());
+        }
+      }
     } else {
       true
     }
   }
 
-  pub async fn install_version(&self, version_id: &MCVersion) -> Result<VersionManifest, Box<dyn std::error::Error>> {
-    let remote_version = &self
-      .get_remote_version(version_id)
-      .ok_or(MinecraftLauncherError(format!("Version not found in remote list: {}", &version_id.to_string())))?;
-
+  /// Installs a specific game version based on the provided remote version information.
+  ///
+  /// This asynchronous function handles the installation of a game version by first fetching
+  /// the version manifest from the remote source, creating necessary directories, and writing
+  /// the version manifest to a JSON file in the designated directory.
+  ///
+  /// # Arguments
+  /// * `remote_version` - A reference to the `RemoteVersionInfo` containing the necessary information
+  ///   to fetch the version manifest.
+  ///
+  /// # Returns
+  /// Returns a `Result` containing either:
+  /// * `VersionManifest` - The version manifest of the installed version if successful.
+  /// * `InstallVersionError` - An error encountered during the installation process.
+  ///
+  /// # Errors
+  /// This function can return an `InstallVersionError` if:
+  /// * The version manifest cannot be fetched from the remote source.
+  /// * There is an error creating the directory structure for the version.
+  /// * There is an error writing the version manifest to the JSON file.
+  pub async fn install_version(&self, remote_version: &RemoteVersionInfo) -> Result<VersionManifest, InstallVersionError> {
     let version_manifest = remote_version.fetch().await?;
-    let target_dir = &self.game_dir.join("versions").join(&version_manifest.get_id().to_string());
+    let version_id = version_manifest.get_id().to_string();
+
+    let target_dir = &self.game_dir.join("versions").join(&version_id);
     create_dir_all(&target_dir)?;
-    let target_json = target_dir.join(format!("{}.json", &version_manifest.get_id().to_string()));
+    let target_json = target_dir.join(format!("{}.json", &version_id));
     serde_json::to_writer_pretty(&File::create(&target_json)?, &version_manifest)?;
 
-    let local_version_info = LocalVersionInfo::from_manifest(&target_json)?;
+    let local_version_info = LocalVersionInfo::new(&version_manifest, &target_json);
     self.local_versions_cache.lock().unwrap().push(local_version_info);
     Ok(version_manifest)
   }

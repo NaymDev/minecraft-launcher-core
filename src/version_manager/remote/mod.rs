@@ -2,11 +2,13 @@ use std::io::Cursor;
 
 use serde::{ Deserialize, Serialize };
 
-use crate::{ bootstrap::MinecraftLauncherError, json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo } };
+use crate::json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo };
 
 mod raw_version_list;
 
 pub use raw_version_list::RawVersionList;
+
+use super::error::InstallVersionError;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -35,11 +37,11 @@ impl RemoteVersionInfo {
     self.compliance_level
   }
 
-  pub async fn fetch(&self) -> Result<VersionManifest, Box<dyn std::error::Error>> {
+  pub async fn fetch(&self) -> Result<VersionManifest, InstallVersionError> {
     let bytes = reqwest::get(&self.url).await?.bytes().await?;
     let sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
     if sha1 != self.sha1 {
-      Err(MinecraftLauncherError(format!("Sha1 mismatch: {sha1} != {}", self.sha1)))?;
+      return Err(InstallVersionError::ChecksumMismatch { expected: self.sha1.clone(), actual: sha1 });
     }
     Ok(serde_json::from_slice(&bytes[..])?)
   }
