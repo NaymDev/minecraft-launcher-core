@@ -17,6 +17,7 @@ pub enum LoadVersionError {
 
 #[derive(Error, Debug)]
 pub enum InstallVersionError {
+  #[error("version not found: {0}")] VersionNotFound(String),
   #[error("failed to fetch")] FetchError(#[from] reqwest::Error),
   #[error("checksum mismatch, expected {expected}, got {actual}")] ChecksumMismatch {
     expected: Sha1Sum,
