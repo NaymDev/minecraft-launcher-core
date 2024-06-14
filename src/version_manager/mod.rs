@@ -59,21 +59,23 @@ impl VersionManager {
   }
 
   pub async fn refresh(&self) -> Result<(), Box<dyn std::error::Error>> {
-    // Clear cache
-    // let mut remote_versions_cache = self.remote_versions_cache.lock().unwrap();
-    // let mut local_versions_cache = self.local_versions_cache.lock().unwrap();
+    self.refresh_remote_versions().await?;
+    self.refresh_local_versions()?;
+    Ok(())
+  }
+
+  async fn refresh_remote_versions(&self) -> Result<(), Box<dyn std::error::Error>> {
     let remote_versions_cache = Arc::clone(&self.remote_versions_cache);
-    let local_versions_cache = Arc::clone(&self.local_versions_cache);
     remote_versions_cache.lock().unwrap().clear();
+    let RawVersionList { versions, .. } = RawVersionList::fetch().await?;
+    remote_versions_cache.lock().unwrap().extend(versions);
+    Ok(())
+  }
+
+  fn refresh_local_versions(&self) -> Result<(), Box<dyn std::error::Error>> {
+    let local_versions_cache = Arc::clone(&self.local_versions_cache);
     local_versions_cache.lock().unwrap().clear();
 
-    // Refresh remote
-    {
-      let raw_version_list = RawVersionList::fetch().await?;
-      remote_versions_cache.lock().unwrap().extend(raw_version_list.versions);
-    }
-
-    // Refresh local
     let versions_dir = &self.game_dir.join("versions");
     match read_dir(versions_dir) {
       Ok(dir) => {
@@ -102,7 +104,6 @@ impl VersionManager {
       }
       Err(err) => warn!("Failed to read version directory: {}", err),
     }
-
     Ok(())
   }
 
