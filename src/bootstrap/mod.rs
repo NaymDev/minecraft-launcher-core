@@ -49,7 +49,7 @@ const DEFAULT_JRE_ARGUMENTS_64BIT: &str =
 #[error("{0}")]
 pub struct MinecraftLauncherError(pub String);
 
-pub struct MinecraftGameRunner {
+pub struct GameBootstrap {
   pub options: GameOptions,
   pub feature_matcher: Box<MinecraftFeatureMatcher>,
   version_manager: VersionManager,
@@ -59,7 +59,7 @@ pub struct MinecraftGameRunner {
   virtual_dir: Option<PathBuf>,
 }
 
-impl MinecraftGameRunner {
+impl GameBootstrap {
   pub fn new(options: GameOptions) -> Self {
     let feature_matcher = Box::new(MinecraftFeatureMatcher(false, options.resolution.clone()));
     let version_manager = VersionManager::new(options.game_dir.clone(), feature_matcher.clone());
@@ -113,7 +113,7 @@ impl MinecraftGameRunner {
   }
 }
 
-impl MinecraftGameRunner {
+impl GameBootstrap {
   pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
     self.progress_reporter().set("Fetching version manifest", 0, 2);

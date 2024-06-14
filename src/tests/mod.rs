@@ -1,5 +1,5 @@
 use crate::{
-  bootstrap::{ options::{ GameOptionsBuilder, LauncherOptions }, MinecraftGameRunner },
+  bootstrap::{ options::{ GameOptionsBuilder, LauncherOptions }, GameBootstrap },
   download_utils::ProxyOptions,
   json::MCVersion,
   profile_manager::auth::OfflineUserAuthentication,
@@ -137,7 +137,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
     .progress_reporter(reporter)
     .build()?;
-  let mut game_runner = MinecraftGameRunner::new(game_options);
+  let mut game_runner = GameBootstrap::new(game_options);
   game_runner.launch().await.unwrap();
   Ok(())
 }

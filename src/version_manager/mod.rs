@@ -14,7 +14,7 @@ use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
-  bootstrap::{ MinecraftGameRunner, MinecraftLauncherError },
+  bootstrap::{ GameBootstrap, MinecraftLauncherError },
   download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
   json::{
     manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, VersionManifest },
@@ -169,7 +169,7 @@ impl VersionManager {
 
   pub fn download_version(
     &self,
-    game_runner: &MinecraftGameRunner,
+    game_runner: &GameBootstrap,
     local_version: &VersionManifest,
     download_job: &mut DownloadJob
   ) -> Result<(), Box<dyn std::error::Error>> {
