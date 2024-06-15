@@ -3,6 +3,7 @@ mod date;
 mod sha1_checksum;
 mod release_type;
 mod version_info;
+mod env_features;
 
 pub mod manifest;
 
@@ -11,3 +12,4 @@ pub use date::Date;
 pub use sha1_checksum::{ Sha1Sum, Sha1SumError };
 pub use release_type::ReleaseType;
 pub use version_info::VersionInfo;
+pub use env_features::EnvironmentFeatures;

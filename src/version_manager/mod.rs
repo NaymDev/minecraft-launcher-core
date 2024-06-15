@@ -4,7 +4,6 @@ use std::{
   collections::HashSet,
   sync::{ Mutex, Arc },
   io::Cursor,
-  ops::Deref,
 };
 
 use error::{ InstallVersionError, LoadVersionError };
@@ -17,7 +16,8 @@ use crate::{
   bootstrap::GameBootstrap,
   download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
   json::{
-    manifest::{ assets::AssetIndex, download::DownloadType, rule::{ FeatureMatcher, OperatingSystem }, VersionManifest },
+    manifest::{ assets::AssetIndex, download::DownloadType, rule::OperatingSystem, VersionManifest },
+    EnvironmentFeatures,
     MCVersion,
     VersionInfo,
   },
@@ -32,7 +32,7 @@ type ArcMutex<T> = Arc<Mutex<T>>;
 #[derive(Debug)]
 pub struct VersionManager {
   pub game_dir: PathBuf,
-  pub feature_matcher: Box<dyn FeatureMatcher + Send + Sync>,
+  pub env_features: EnvironmentFeatures,
   remote_versions_cache: ArcMutex<Vec<RemoteVersionInfo>>,
   local_versions_cache: ArcMutex<Vec<LocalVersionInfo>>,
 }
@@ -42,15 +42,13 @@ impl VersionManager {
   ///
   /// # Arguments
   /// * `game_dir` - A `PathBuf` that specifies the directory where the game data is stored.
-  /// * `feature_matcher` - A boxed `FeatureMatcher` trait object that allows matching features.
-  ///   This object must be thread-safe as indicated by the `Send + Sync` bounds.
   ///
   /// # Returns
   /// Returns a new instance of `Self`.
-  pub fn new(game_dir: PathBuf, feature_matcher: Box<dyn FeatureMatcher + Send + Sync>) -> Self {
+  pub fn new(game_dir: PathBuf, env_features: EnvironmentFeatures) -> Self {
     Self {
       game_dir,
-      feature_matcher,
+      env_features,
       remote_versions_cache: Arc::default(),
       local_versions_cache: Arc::default(),
     }
@@ -195,7 +193,7 @@ impl VersionManager {
 impl VersionManager {
   /// Returns true if all version required files are present in the game directory
   fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
-    let required_files = local.get_required_files(os, self.feature_matcher.deref());
+    let required_files = local.get_required_files(os, &self.env_features);
     !required_files
       .iter()
       .find(|file| self.game_dir.join(file).is_file())
@@ -289,7 +287,7 @@ impl VersionManager {
         &game_runner.options.proxy,
         &game_runner.options.game_dir,
         false,
-        game_runner.feature_matcher.deref()
+        &game_runner.options.env_features()
       )
     );
     let jar_id = local_version.get_jar().to_string();
@@ -348,22 +346,12 @@ mod tests {
 
   use simple_logger::SimpleLogger;
 
-  use crate::json::manifest::rule::RuleFeatureType;
-
   use super::*;
-
-  struct TestFeatureMatcher;
-
-  impl FeatureMatcher for TestFeatureMatcher {
-    fn has_feature(&self, _feature_type: &RuleFeatureType, _value: &serde_json::Value) -> bool {
-      false
-    }
-  }
 
   #[tokio::test]
   async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
     SimpleLogger::new().init().unwrap();
-    let mut version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), Box::new(TestFeatureMatcher));
+    let mut version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), EnvironmentFeatures::default());
     version_manager.refresh().await?;
     info!("{:#?}", version_manager.local_versions_cache);
     let local = version_manager.get_local_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));

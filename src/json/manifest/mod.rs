@@ -7,12 +7,12 @@ use download::{ DownloadInfo, DownloadType };
 use java::JavaVersionInfo;
 use library::Library;
 use logging::LoggingEntry;
-use rule::{ FeatureMatcher, OperatingSystem, Rule, RuleAction };
+use rule::{ OperatingSystem, Rule, RuleAction };
 use serde::{ Deserialize, Serialize };
 
 use crate::{ bootstrap::MinecraftLauncherError, download_utils::{ Downloadable, ProxyOptions }, version_manager::VersionManager };
 
-use super::{ Date, MCVersion, ReleaseType, VersionInfo };
+use super::{ Date, EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo };
 
 pub mod argument;
 pub mod assets;
@@ -63,10 +63,10 @@ pub struct VersionManifest {
 }
 
 impl VersionManifest {
-  pub fn get_relevant_libraries(&self, matcher: &dyn FeatureMatcher) -> Vec<&Library> {
+  pub fn get_relevant_libraries(&self, env_features: &EnvironmentFeatures) -> Vec<&Library> {
     self.libraries
       .iter()
-      .filter(|lib| lib.applies_to_current_environment(matcher))
+      .filter(|lib| lib.applies_to_current_environment(env_features))
       .collect()
   }
 
@@ -76,10 +76,10 @@ impl VersionManifest {
     proxy: &ProxyOptions,
     mc_dir: &PathBuf,
     force_download: bool,
-    matcher: &impl FeatureMatcher
+    env_features: &EnvironmentFeatures
   ) -> Vec<Box<dyn Downloadable + Send + Sync>> {
     let mut vec = vec![];
-    for lib in self.get_relevant_libraries(matcher) {
+    for lib in self.get_relevant_libraries(env_features) {
       let classifier = if !lib.natives.is_empty() {
         if let Some(native) = lib.natives.get(os) {
           Some(native.as_str())
@@ -104,9 +104,9 @@ impl VersionManifest {
     vec
   }
 
-  pub fn get_required_files(&self, os: &OperatingSystem, matcher: &dyn FeatureMatcher) -> HashSet<String> {
+  pub fn get_required_files(&self, os: &OperatingSystem, env_features: &EnvironmentFeatures) -> HashSet<String> {
     let mut set = HashSet::new();
-    let libraries = self.get_relevant_libraries(matcher);
+    let libraries = self.get_relevant_libraries(env_features);
     for library in libraries {
       if !library.natives.is_empty() {
         if let Some(native) = library.natives.get(os) {
@@ -131,24 +131,24 @@ impl VersionManifest {
     self.downloads.get(&download_type)
   }
 
-  pub fn applies_to_current_environment(&self, matcher: &impl FeatureMatcher) -> bool {
-    if !self.compatibility_rules.is_empty() {
-      let mut action = RuleAction::Disallow;
-      for rule in &self.compatibility_rules {
-        if let Some(applied_action) = rule.get_applied_action(Some(matcher)) {
-          action = applied_action;
-        }
-      }
-
-      action == RuleAction::Allow
-    } else {
-      true
+  pub fn applies_to_current_environment(&self, env_features: &EnvironmentFeatures) -> bool {
+    if self.compatibility_rules.is_empty() {
+      return true;
     }
+
+    let mut action = RuleAction::Disallow;
+    for rule in &self.compatibility_rules {
+      if let Some(applied_action) = rule.get_applied_action(env_features) {
+        action = applied_action;
+      }
+    }
+
+    return action == RuleAction::Allow;
   }
 
-  pub fn get_classpath(&self, _os: &OperatingSystem, mc_dir: &PathBuf, matcher: &impl FeatureMatcher) -> Vec<PathBuf> {
+  pub fn get_classpath(&self, _os: &OperatingSystem, mc_dir: &PathBuf, env_features: &EnvironmentFeatures) -> Vec<PathBuf> {
     let mut vec = vec![];
-    let libraries = self.get_relevant_libraries(matcher);
+    let libraries = self.get_relevant_libraries(env_features);
     for library in libraries {
       if library.natives.is_empty() {
         vec.push(mc_dir.join("libraries").join(library.get_artifact_path(None).replace("/", MAIN_SEPARATOR_STR)));

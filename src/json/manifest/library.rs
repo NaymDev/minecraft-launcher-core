@@ -3,9 +3,9 @@ use std::{ collections::HashMap, path::PathBuf };
 use reqwest::Url;
 use serde::{ Deserialize, Serialize };
 
-use crate::download_utils::{ ProxyOptions, Downloadable, ChecksummedDownloadable, PreHashedDownloadable };
+use crate::{ download_utils::{ ChecksummedDownloadable, Downloadable, PreHashedDownloadable, ProxyOptions }, json::EnvironmentFeatures };
 
-use super::{ artifact::Artifact, rule::{ FeatureMatcher, OperatingSystem, Rule, RuleAction }, DownloadInfo };
+use super::{ artifact::Artifact, rule::{ OperatingSystem, Rule, RuleAction }, DownloadInfo };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -24,19 +24,19 @@ pub struct Library {
 }
 
 impl Library {
-  pub fn applies_to_current_environment(&self, matcher: &dyn FeatureMatcher) -> bool {
+  pub fn applies_to_current_environment(&self, env_features: &EnvironmentFeatures) -> bool {
     if self.rules.is_empty() {
-      true
-    } else {
-      let mut action = RuleAction::Disallow;
-      for rule in &self.rules {
-        if let Some(applied_action) = rule.get_applied_action(Some(matcher)) {
-          action = applied_action;
-        }
-      }
-
-      action == RuleAction::Allow
+      return true;
     }
+
+    let mut action = RuleAction::Disallow;
+    for rule in &self.rules {
+      if let Some(applied_action) = rule.get_applied_action(env_features) {
+        action = applied_action;
+      }
+    }
+
+    return action == RuleAction::Allow;
   }
 
   pub fn get_artifact_path(&self, classifier: Option<&str>) -> String {

@@ -1,6 +1,8 @@
 use serde::{ Deserialize, Serialize };
 
-use super::rule::{ FeatureMatcher, Rule, RuleAction };
+use crate::json::EnvironmentFeatures;
+
+use super::rule::{ Rule, RuleAction };
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -20,8 +22,8 @@ pub enum Argument {
 }
 
 impl Argument {
-  pub fn apply(&self, matcher: &impl FeatureMatcher) -> Option<Vec<&String>> {
-    if self.applies_to_current_environment(matcher) { Some(self.value()) } else { None }
+  pub fn apply(&self, env_features: &EnvironmentFeatures) -> Option<Vec<&String>> {
+    if self.applies_to_current_environment(env_features) { Some(self.value()) } else { None }
   }
 
   pub fn value(&self) -> Vec<&String> {
@@ -31,19 +33,23 @@ impl Argument {
     }
   }
 
-  pub fn applies_to_current_environment(&self, matcher: &impl FeatureMatcher) -> bool {
-    match self {
-      Argument::Value(_) => true,
-      Argument::Object { rules, .. } => {
-        let mut action = RuleAction::Disallow;
-        for rule in rules {
-          if let Some(applied_action) = rule.get_applied_action(Some(matcher)) {
-            action = applied_action;
-          }
-        }
-
-        action == RuleAction::Allow
+  pub fn applies_to_current_environment(&self, env_features: &EnvironmentFeatures) -> bool {
+    if let Argument::Object { rules, .. } = self {
+      // TODO: needed?
+      if rules.is_empty() {
+        return true;
       }
+
+      let mut action = RuleAction::Disallow;
+      for rule in rules {
+        if let Some(applied_action) = rule.get_applied_action(env_features) {
+          action = applied_action;
+        }
+      }
+
+      return action == RuleAction::Allow;
+    } else {
+      return true;
     }
   }
 }

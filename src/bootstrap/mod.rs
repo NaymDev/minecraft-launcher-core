@@ -3,7 +3,6 @@ use std::{
   env::consts::ARCH,
   fs::{ self, create_dir_all, File },
   io::{ self, Write },
-  ops::Deref,
   path::{ PathBuf, MAIN_SEPARATOR_STR },
   sync::Arc,
 };
@@ -11,7 +10,7 @@ use std::{
 use argument_substitutor::ArgumentSubstitutorBuilder;
 use chrono::{ Utc, Timelike };
 use log::{ info, error, debug, warn };
-use options::{ GameOptions, MinecraftFeatureMatcher };
+use options::GameOptions;
 use os_info::Type::Windows;
 use process::{ GameProcess, GameProcessBuilder };
 use regex::Regex;
@@ -22,13 +21,7 @@ use zip::ZipArchive;
 use crate::{
   download_utils::{ download_job::DownloadJob, ProxyOptions },
   json::{
-    manifest::{
-      argument::ArgumentType,
-      assets::AssetIndex,
-      library::ExtractRules,
-      rule::{ FeatureMatcher, OperatingSystem, RuleFeatureType },
-      VersionManifest,
-    },
+    manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, VersionManifest },
     Sha1Sum,
     VersionInfo,
   },
@@ -52,7 +45,6 @@ pub struct MinecraftLauncherError(pub String);
 
 pub struct GameBootstrap {
   pub options: GameOptions,
-  pub feature_matcher: Box<MinecraftFeatureMatcher>,
   version_manager: VersionManager,
   local_version: Option<VersionManifest>,
 
@@ -62,12 +54,11 @@ pub struct GameBootstrap {
 
 impl GameBootstrap {
   pub fn new(options: GameOptions) -> Self {
-    let feature_matcher = Box::new(MinecraftFeatureMatcher(false, options.resolution.clone()));
-    let version_manager = VersionManager::new(options.game_dir.clone(), feature_matcher.clone());
+    // let feature_matcher = Box::new(MinecraftFeatureMatcher(false, options.resolution.clone()));
+    let version_manager = VersionManager::new(options.game_dir.clone(), options.env_features());
 
     Self {
       options,
-      feature_matcher,
       version_manager,
 
       local_version: None,
@@ -127,7 +118,7 @@ impl GameBootstrap {
       None => { self.version_manager.install_version_by_id(&self.options.version).await? }
     };
 
-    if !local_version.applies_to_current_environment(self.feature_matcher.deref()) {
+    if !local_version.applies_to_current_environment(&self.options.env_features()) {
       return Err(
         MinecraftLauncherError(format!("Version {} is is incompatible with the current environment", self.options.version.to_string())).into()
       );
@@ -235,7 +226,7 @@ impl GameBootstrap {
         game_process_builder.with_arguments(
           arguments
             .iter()
-            .map(|v| v.apply(self.feature_matcher.deref()))
+            .map(|v| v.apply(&self.options.env_features()))
             .flatten()
             .flatten()
             .cloned()
@@ -267,7 +258,7 @@ impl GameBootstrap {
         game_process_builder.with_arguments(
           arguments
             .iter()
-            .map(|v| v.apply(self.feature_matcher.deref()))
+            .map(|v| v.apply(&self.options.env_features()))
             .flatten()
             .flatten()
             .cloned()
@@ -284,11 +275,12 @@ impl GameBootstrap {
           .collect::<Vec<_>>()
       );
 
-      if self.feature_matcher.has_feature(&RuleFeatureType::IsDemoUser, &json!(true)) {
+      let env_features = &self.options.env_features();
+      if env_features.has_feature(&RuleFeatureType::IsDemoUser, &json!(true)) {
         game_process_builder.with_argument("--demo");
       }
 
-      if self.feature_matcher.has_feature(&RuleFeatureType::HasCustomResolution, &json!(true)) {
+      if env_features.has_feature(&RuleFeatureType::HasCustomResolution, &json!(true)) {
         game_process_builder.with_arguments(
           vec![
             "--width".to_string(),
@@ -381,7 +373,7 @@ impl GameBootstrap {
 
   fn unpack_natives(&self, natives_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let os = OperatingSystem::get_current_platform();
-    let libs = self.local_version.as_ref().unwrap().get_relevant_libraries(self.feature_matcher.deref());
+    let libs = self.local_version.as_ref().unwrap().get_relevant_libraries(&self.options.env_features());
 
     fn unpack_native(
       natives_dir: &PathBuf,
@@ -563,7 +555,7 @@ impl GameBootstrap {
   fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, MinecraftLauncherError> {
     let os = OperatingSystem::get_current_platform();
     let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
-    let classpath = local_version.get_classpath(&os, &self.options.game_dir, self.feature_matcher.deref());
+    let classpath = local_version.get_classpath(&os, &self.options.game_dir, &self.options.env_features());
     for path in &classpath {
       if !path.is_file() {
         return Err(MinecraftLauncherError(format!("Classpath file not found: {}", path.display())));

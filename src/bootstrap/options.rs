@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
   download_utils::ProxyOptions,
-  json::{ manifest::rule::{ FeatureMatcher, RuleFeatureType }, MCVersion },
+  json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures, MCVersion },
   progress_reporter::ProgressReporter,
 };
 
@@ -52,6 +52,8 @@ pub struct GameOptions {
   pub java_path: PathBuf,
   pub authentication: UserAuthentication,
   #[builder(default)]
+  pub demo: Option<bool>,
+  #[builder(default)]
   pub launcher_options: Option<LauncherOptions>,
   #[builder(default)]
   pub substitutor_overrides: HashMap<String, String>,
@@ -67,6 +69,20 @@ pub struct GameOptions {
   pub max_download_attempts: u8,
 }
 
+impl GameOptions {
+  pub fn env_features(&self) -> EnvironmentFeatures {
+    let mut env_features = EnvironmentFeatures::new();
+    if let Some(demo) = self.demo {
+      env_features.set_feature(RuleFeatureType::IsDemoUser, Value::Bool(demo));
+    }
+    if self.resolution.is_some() {
+      env_features.set_feature(RuleFeatureType::HasCustomResolution, Value::Bool(true));
+    }
+    // TODO:
+    env_features
+  }
+}
+
 impl GameOptionsBuilder {
   pub fn progress_reporter(self, progress_reporter: ProgressReporter) -> Self {
     self.progress_reporter_arc(&Arc::new(progress_reporter))
@@ -75,28 +91,5 @@ impl GameOptionsBuilder {
   pub fn progress_reporter_arc(mut self, arc: &Arc<ProgressReporter>) -> Self {
     self.progress_reporter = Some(Arc::clone(arc));
     self
-  }
-}
-
-#[derive(Debug, Clone)]
-pub struct MinecraftFeatureMatcher(pub bool, pub Option<MinecraftResolution>);
-
-impl MinecraftFeatureMatcher {
-  pub fn new(is_demo: bool, custom_resolution: Option<MinecraftResolution>) -> Self {
-    Self(is_demo, custom_resolution)
-  }
-}
-
-impl FeatureMatcher for MinecraftFeatureMatcher {
-  fn has_feature(&self, feature_type: &RuleFeatureType, value: &Value) -> bool {
-    if let Some(value) = value.as_bool() {
-      if let RuleFeatureType::IsDemoUser = feature_type {
-        return value == self.0;
-      }
-      if let RuleFeatureType::HasCustomResolution = feature_type {
-        return value == self.1.is_some();
-      }
-    }
-    return false;
   }
 }
