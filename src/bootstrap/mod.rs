@@ -45,7 +45,7 @@ pub struct MinecraftLauncherError(pub String);
 
 pub struct GameBootstrap {
   pub options: GameOptions,
-  version_manager: VersionManager,
+  version_manager: Option<VersionManager>,
   local_version: Option<VersionManifest>,
 
   natives_dir: Option<PathBuf>,
@@ -55,11 +55,11 @@ pub struct GameBootstrap {
 impl GameBootstrap {
   pub fn new(options: GameOptions) -> Self {
     // let feature_matcher = Box::new(MinecraftFeatureMatcher(false, options.resolution.clone()));
-    let version_manager = VersionManager::new(options.game_dir.clone(), options.env_features());
+    // let version_manager = VersionManager::new(options.game_dir.clone(), options.env_features());
 
     Self {
       options,
-      version_manager,
+      version_manager: None,
 
       local_version: None,
       natives_dir: None,
@@ -109,13 +109,15 @@ impl GameBootstrap {
   pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
     self.progress_reporter().set("Fetching version manifest", 0, 2);
-    self.version_manager.refresh().await?;
+    self.version_manager = Some(VersionManager::new(self.options.game_dir.clone(), self.options.env_features()).await?);
+    let version_manager = self.version_manager.as_ref().unwrap();
+    // self.version_manager.refresh().await?;
     info!("Queuing library & version downloads");
 
     self.progress_reporter().set_status("Resolving local version").set_progress(1);
-    let mut local_version = match self.version_manager.get_local_version(&self.options.version) {
-      Some(local_version) => local_version.load_manifest()?,
-      None => { self.version_manager.install_version_by_id(&self.options.version).await? }
+    let mut local_version = match version_manager.get_installed_version(&self.options.version) {
+      Ok(local_version) => local_version,
+      Err(_) => { version_manager.install_version_by_id(&self.options.version).await? }
     };
 
     if !local_version.applies_to_current_environment(&self.options.env_features()) {
@@ -124,11 +126,11 @@ impl GameBootstrap {
       );
     }
 
-    if !self.version_manager.is_up_to_date(&local_version).await {
-      local_version = self.version_manager.install_version_by_id(&self.options.version).await?;
+    if !version_manager.is_up_to_date(&local_version).await {
+      local_version = version_manager.install_version_by_id(&self.options.version).await?;
     }
 
-    local_version = local_version.resolve(&self.version_manager, HashSet::new()).await?;
+    local_version = local_version.resolve(&version_manager, HashSet::new()).await?;
 
     self.progress_reporter().clear();
     // TODO: self.migrate_old_assets()
@@ -139,6 +141,7 @@ impl GameBootstrap {
   }
 
   async fn download_required_files(&self, local_version: &VersionManifest) -> Result<(), Box<dyn std::error::Error>> {
+    let version_manager = self.version_manager.as_ref().unwrap();
     let mut job1 = DownloadJob::new(
       "Version & Libraries",
       false,
@@ -146,7 +149,7 @@ impl GameBootstrap {
       self.options.max_download_attempts,
       self.progress_reporter()
     );
-    self.version_manager.download_version(&self, local_version, &mut job1)?;
+    version_manager.download_version(&self, local_version, &mut job1)?;
 
     let mut job2 = DownloadJob::new(
       "Resources",
@@ -155,7 +158,7 @@ impl GameBootstrap {
       self.options.max_download_attempts,
       self.progress_reporter()
     );
-    job2.add_downloadables(self.version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
+    job2.add_downloadables(version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
 
     job1.start().await?;
     job2.start().await?;
@@ -342,13 +345,14 @@ impl GameBootstrap {
   }
 
   fn cleanup_old_natives(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let game_dir = &self.version_manager.game_dir;
+    let version_manager = self.version_manager.as_ref().unwrap();
+    let game_dir = &version_manager.game_dir;
 
     let current_time = Utc::now().timestamp_millis() as u128;
     // let time_threshold = Duration::from_secs(3600);
 
-    for local_ver in self.version_manager.get_local_versions() {
-      let version_id = local_ver.get_id().to_string();
+    for version_id in version_manager.installed_versions() {
+      let version_id = version_id.to_string();
       let version_dir = game_dir.join("versions").join(&version_id);
       let dirs: Vec<PathBuf> = fs
         ::read_dir(&version_dir)?

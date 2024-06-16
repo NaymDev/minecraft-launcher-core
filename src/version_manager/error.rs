@@ -4,6 +4,7 @@ use crate::json::{ Sha1Sum, Sha1SumError };
 
 #[derive(Error, Debug)]
 pub enum LoadVersionError {
+  #[error("version not found: {0}")] VersionNotFound(String),
   #[error("failed to fetch remote version list")] FetchError(#[from] reqwest::Error),
   #[error("not a directory")]
   NotADirectory,

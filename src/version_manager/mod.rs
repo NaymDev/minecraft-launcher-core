@@ -1,14 +1,13 @@
 use std::{
-  path::{ PathBuf, MAIN_SEPARATOR_STR },
-  fs::{ read_dir, File, create_dir_all, self },
   collections::HashSet,
-  sync::{ Mutex, Arc },
+  fs::{ self, create_dir_all, read_dir, File },
   io::Cursor,
+  path::{ PathBuf, MAIN_SEPARATOR_STR },
+  sync::{ Arc, Mutex },
 };
 
 use error::{ InstallVersionError, LoadVersionError };
-use local::LocalVersionInfo;
-use log::{ info, warn, error };
+use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
@@ -23,88 +22,52 @@ use crate::{
   },
 };
 
-pub mod local;
 pub mod remote;
 pub mod error;
-
-type ArcMutex<T> = Arc<Mutex<T>>;
 
 #[derive(Debug)]
 pub struct VersionManager {
   pub game_dir: PathBuf,
   pub env_features: EnvironmentFeatures,
-  remote_versions_cache: ArcMutex<Vec<RemoteVersionInfo>>,
-  local_versions_cache: ArcMutex<Vec<LocalVersionInfo>>,
+
+  local_cache: Arc<Mutex<Vec<MCVersion>>>,
+  remote_cache: Option<RawVersionList>,
 }
 
 impl VersionManager {
-  /// Creates a new instance of the object.
-  ///
-  /// # Arguments
-  /// * `game_dir` - A `PathBuf` that specifies the directory where the game data is stored.
-  ///
-  /// # Returns
-  /// Returns a new instance of `Self`.
-  pub fn new(game_dir: PathBuf, env_features: EnvironmentFeatures) -> Self {
-    Self {
-      game_dir,
-      env_features,
-      remote_versions_cache: Arc::default(),
-      local_versions_cache: Arc::default(),
+  pub async fn new(game_dir: PathBuf, env_features: EnvironmentFeatures) -> Result<Self, LoadVersionError> {
+    let mut version_manager = Self { game_dir, env_features, local_cache: Arc::default(), remote_cache: None };
+    version_manager.refresh().await?;
+    Ok(version_manager)
+  }
+
+  fn versions_dir(&self) -> PathBuf {
+    self.game_dir.join("versions")
+  }
+
+  pub fn installed_versions(&self) -> Vec<MCVersion> {
+    if let Ok(local_cache) = self.local_cache.try_lock() {
+      return local_cache.to_vec();
+    } else {
+      return vec![];
     }
   }
 
-  /// Retrieves a list of local version information.
-  ///
-  /// This function locks the internal cache of local versions and returns a clone of the data.
-  /// The lock is held for the duration of the `to_vec()` operation to ensure thread safety.
-  ///
-  /// # Returns
-  /// A vector of `LocalVersionInfo` containing the details of local versions.
-  ///
-  /// # Panics
-  /// Panics if the lock on the cache cannot be acquired.
-  pub fn get_local_versions(&self) -> Vec<LocalVersionInfo> {
-    let mutex_guard = self.local_versions_cache.lock().unwrap();
-    mutex_guard.to_vec()
-  }
-
-  /// Retrieves a list of remote version information.
-  ///
-  /// This function locks the internal cache of remote versions and returns a clone of the data.
-  /// The lock is held for the duration of the `to_vec()` operation to ensure thread safety.
-  ///
-  /// # Returns
-  /// A vector of `RemoteVersionInfo` containing the details of remote versions.
-  ///
-  /// # Panics
-  /// Panics if the lock on the cache cannot be acquired.
-  pub fn get_remote_versions(&self) -> Vec<RemoteVersionInfo> {
-    let mutex_guard = self.remote_versions_cache.lock().unwrap();
-    mutex_guard.to_vec()
-  }
-
-  /// Retrieves the remote version information based on the provided version identifier.
-  ///
-  /// This function searches through a cached list of remote versions, attempting to find
-  /// a version that matches the given `version_id`. If found, it returns a clone of the
-  /// `RemoteVersionInfo` associated with that version.
-  ///
-  /// # Arguments
-  /// * `version_id` - A reference to the `MCVersion` identifier for which the remote version info is sought.
-  ///
-  /// # Returns
-  /// An `Option<RemoteVersionInfo>` which is `Some` if the version is found, otherwise `None`.
-  ///
-  /// # Panics
-  /// This function will panic if the lock on the cache cannot be acquired.
-  pub fn get_remote_version(&self, version_id: &MCVersion) -> Option<RemoteVersionInfo> {
-    self.remote_versions_cache
-      .lock()
-      .unwrap()
+  pub fn remote_versions(&self) -> Vec<&MCVersion> {
+    self.remote_cache
       .iter()
+      .map(|raw| &raw.versions)
+      .flatten()
+      .map(|v| v.get_id())
+      .collect()
+  }
+
+  pub fn get_remote_version(&self, version_id: &MCVersion) -> Option<&RemoteVersionInfo> {
+    self.remote_cache
+      .iter()
+      .map(|raw| &raw.versions)
+      .flatten()
       .find(|v| v.get_id() == version_id)
-      .cloned()
   }
 
   /// Retrieves the local version information based on the provided version identifier.
@@ -121,42 +84,25 @@ impl VersionManager {
   ///
   /// # Panics
   /// This function will panic if the lock on the cache cannot be acquired.
-  pub fn get_local_version(&self, version_id: &MCVersion) -> Option<LocalVersionInfo> {
-    self.local_versions_cache
-      .lock()
-      .unwrap()
-      .iter()
-      .find(|v| v.get_id() == version_id)
-      .cloned()
+  pub fn get_installed_version(&self, version_id: &MCVersion) -> Result<VersionManifest, LoadVersionError> {
+    let installed_versions = self.installed_versions();
+    if !installed_versions.contains(version_id) {
+      return Err(LoadVersionError::VersionNotFound(version_id.to_string()));
+    }
+    self.load_manifest(version_id)
   }
 }
 
 impl VersionManager {
-  /// Refreshes both remote and local versions.
-  ///
-  /// This function first refreshes the remote versions and then the local versions.
-  /// It will return an error if any of the refresh operations fail.
-  ///
-  /// # Errors
-  /// Returns `LoadVersionError` if there is an issue loading either the remote or local versions.
-  pub async fn refresh(&self) -> Result<(), LoadVersionError> {
-    // TODO: refresh both at the same time
-    self.refresh_remote_versions().await?;
+  pub async fn refresh(&mut self) -> Result<(), LoadVersionError> {
+    self.remote_cache.replace(RawVersionList::fetch().await?);
     self.refresh_local_versions()?;
     Ok(())
   }
 
-  async fn refresh_remote_versions(&self) -> Result<(), LoadVersionError> {
-    let remote_versions_cache = Arc::clone(&self.remote_versions_cache);
-    remote_versions_cache.lock().unwrap().clear();
-    let RawVersionList { versions, .. } = RawVersionList::fetch().await?;
-    remote_versions_cache.lock().unwrap().extend(versions);
-    Ok(())
-  }
-
   fn refresh_local_versions(&self) -> Result<(), LoadVersionError> {
-    let local_versions_cache = Arc::clone(&self.local_versions_cache);
-    local_versions_cache.lock().unwrap().clear();
+    let local_cache = Arc::clone(&self.local_cache);
+    local_cache.lock().unwrap().clear();
 
     let versions_dir = &self.game_dir.join("versions");
     match read_dir(versions_dir) {
@@ -164,56 +110,80 @@ impl VersionManager {
         let dir_names: Vec<String> = dir
           .filter_map(|entry| entry.ok())
           .filter(|entry| entry.path().is_dir())
-          .map(|entry| entry.file_name().to_str().unwrap().to_string())
+          .map(|entry| entry.file_name().into_string())
+          .flatten()
           .collect();
 
+        let mut versions = vec![];
         for version_id in dir_names {
           info!("Scanning local version versions/{}", &version_id);
-          let version_dir = &versions_dir.join(&version_id);
-          match LocalVersionInfo::load(&version_dir) {
-            Ok(local_version) => {
-              local_versions_cache.lock().unwrap().push(local_version);
+          let version_id = MCVersion::from(version_id);
+          match self.load_manifest(&version_id) {
+            Ok(_) => {
+              versions.push(version_id);
             }
             Err(LoadVersionError::ManifestNotFound) => {
+              let version_id = version_id.to_string();
               warn!("Version file not found! Skipping. (versions/{}/{}.json)", &version_id, &version_id);
             }
             Err(LoadVersionError::ManifestParseError(e)) => {
+              let version_id = version_id.to_string();
               warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, e);
             }
             Err(err) => warn!("Failed to load version: {}", err),
           }
         }
+        local_cache.lock().unwrap().extend(versions);
       }
       Err(err) => warn!("Failed to read version directory: {}", err),
     }
     Ok(())
   }
+
+  fn load_manifest(&self, version_id: &MCVersion) -> Result<VersionManifest, LoadVersionError> {
+    let version_id = version_id.to_string();
+    let manifest_path = self.versions_dir().join(&version_id).join(format!("{}.json", &version_id));
+    if !manifest_path.is_file() {
+      return Err(LoadVersionError::ManifestNotFound);
+    }
+    let manifest_file = File::open(&manifest_path)?;
+    return Ok(serde_json::from_reader(manifest_file)?);
+  }
 }
 
+/* Version Download Functions */
+// Install Version (downloads manifest only)
 impl VersionManager {
-  /// Returns true if all version required files are present in the game directory
-  fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
-    let required_files = local.get_required_files(os, &self.env_features);
-    !required_files
-      .iter()
-      .find(|file| self.game_dir.join(file).is_file())
-      .is_none()
+  pub async fn install_version_by_id(&self, version_id: &MCVersion) -> Result<VersionManifest, InstallVersionError> {
+    if let Some(remote_version) = self.get_remote_version(version_id) {
+      return self.install_version(&remote_version).await;
+    }
+    Err(InstallVersionError::VersionNotFound(version_id.to_string()))
   }
 
-  /// Checks if the local version is up-to-date with the remote version.
-  ///
-  /// This function compares the update time of the local version against the remote version.
-  /// If the remote version is newer, it returns false. Otherwise, it checks if all necessary
-  /// files for the version are present and accessible on the current operating system.
-  ///
-  /// # Arguments
-  /// * `version_manifest` - A reference to the `VersionManifest` that contains metadata about the version.
-  ///
-  /// # Returns
-  /// Returns `true` if the local version is up-to-date and all files are present, otherwise `false`.
-  ///
-  /// # Errors
-  /// Logs an error if the version resolution fails.
+  pub async fn install_version(&self, remote_version: &RemoteVersionInfo) -> Result<VersionManifest, InstallVersionError> {
+    let version_manifest = remote_version.fetch().await?;
+    let version_id = version_manifest.get_id().to_string();
+
+    let target_dir = self.versions_dir().join(&version_id);
+    create_dir_all(&target_dir)?;
+    let target_json = target_dir.join(format!("{}.json", &version_id));
+    serde_json::to_writer_pretty(&File::create(&target_json)?, &version_manifest)?;
+
+    if let Ok(mut local_cache) = self.local_cache.lock() {
+      local_cache.push(version_manifest.get_id().clone());
+    }
+    Ok(version_manifest)
+  }
+}
+
+// Assets and Libraries
+impl VersionManager {
+  fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
+    let required_files = local.get_required_files(os, &self.env_features);
+    required_files.iter().all(|file| self.game_dir.join(file).is_file())
+  }
+
   pub async fn is_up_to_date(&self, version_manifest: &VersionManifest) -> bool {
     if let Some(remote_version) = self.get_remote_version(version_manifest.get_id()) {
       if remote_version.get_updated_time().inner() > version_manifest.get_updated_time().inner() {
@@ -232,47 +202,6 @@ impl VersionManager {
     } else {
       true
     }
-  }
-
-  pub async fn install_version_by_id(&self, version_id: &MCVersion) -> Result<VersionManifest, InstallVersionError> {
-    if let Some(remote_version) = self.get_remote_version(version_id) {
-      return self.install_version(&remote_version).await;
-    }
-    Err(InstallVersionError::VersionNotFound(version_id.to_string()))
-  }
-
-  /// Installs a specific game version based on the provided remote version information.
-  ///
-  /// This asynchronous function handles the installation of a game version by first fetching
-  /// the version manifest from the remote source, creating necessary directories, and writing
-  /// the version manifest to a JSON file in the designated directory.
-  ///
-  /// # Arguments
-  /// * `remote_version` - A reference to the `RemoteVersionInfo` containing the necessary information
-  ///   to fetch the version manifest.
-  ///
-  /// # Returns
-  /// Returns a `Result` containing either:
-  /// * `VersionManifest` - The version manifest of the installed version if successful.
-  /// * `InstallVersionError` - An error encountered during the installation process.
-  ///
-  /// # Errors
-  /// This function can return an `InstallVersionError` if:
-  /// * The version manifest cannot be fetched from the remote source.
-  /// * There is an error creating the directory structure for the version.
-  /// * There is an error writing the version manifest to the JSON file.
-  pub async fn install_version(&self, remote_version: &RemoteVersionInfo) -> Result<VersionManifest, InstallVersionError> {
-    let version_manifest = remote_version.fetch().await?;
-    let version_id = version_manifest.get_id().to_string();
-
-    let target_dir = &self.game_dir.join("versions").join(&version_id);
-    create_dir_all(&target_dir)?;
-    let target_json = target_dir.join(format!("{}.json", &version_id));
-    serde_json::to_writer_pretty(&File::create(&target_json)?, &version_manifest)?;
-
-    let local_version_info = LocalVersionInfo::new(&version_manifest, &target_json);
-    self.local_versions_cache.lock().unwrap().push(local_version_info);
-    Ok(version_manifest)
   }
 
   pub fn download_version(
@@ -351,12 +280,11 @@ mod tests {
   #[tokio::test]
   async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
     SimpleLogger::new().init().unwrap();
-    let mut version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), EnvironmentFeatures::default());
-    version_manager.refresh().await?;
-    info!("{:#?}", version_manager.local_versions_cache);
-    let local = version_manager.get_local_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
-    if let Some(local) = local {
-      let resolved = local.clone().load_manifest()?.resolve(&mut version_manager, HashSet::new()).await?;
+    let mut version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), EnvironmentFeatures::default()).await?;
+    info!("{:#?}", version_manager.local_cache);
+    let local = version_manager.get_installed_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
+    if let Ok(local) = local {
+      let resolved = local.resolve(&mut version_manager, HashSet::new()).await?;
       info!("Resolved: {:#?}", resolved);
     }
     Ok(())
