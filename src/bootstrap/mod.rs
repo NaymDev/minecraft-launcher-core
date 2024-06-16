@@ -149,7 +149,7 @@ impl GameBootstrap {
       self.options.max_download_attempts,
       self.progress_reporter()
     );
-    version_manager.download_version(&self, local_version, &mut job1)?;
+    job1.add_downloadables(version_manager.get_version_downloadables(&self.options.proxy, local_version));
 
     let mut job2 = DownloadJob::new(
       "Resources",

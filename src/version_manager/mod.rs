@@ -204,35 +204,31 @@ impl VersionManager {
     }
   }
 
-  pub fn download_version(
-    &self,
-    game_runner: &GameBootstrap,
-    local_version: &VersionManifest,
-    download_job: &mut DownloadJob
-  ) -> Result<(), Box<dyn std::error::Error>> {
-    download_job.add_downloadables(
-      local_version.get_required_downloadables(
-        &OperatingSystem::get_current_platform(),
-        &game_runner.options.proxy,
-        &game_runner.options.game_dir,
-        false,
-        &game_runner.options.env_features()
-      )
+  pub fn get_version_downloadables(&self, proxy: &ProxyOptions, local_version: &VersionManifest) -> Vec<Box<dyn Downloadable + Send + Sync>> {
+    let mut downloadables = local_version.get_required_downloadables(
+      &OperatingSystem::get_current_platform(),
+      proxy,
+      &self.game_dir,
+      false,
+      &self.env_features
     );
+
     let jar_id = local_version.get_jar().to_string();
     let jar_path = format!("versions/{}/{}.jar", &jar_id, &jar_id);
-    let jar_file_path = game_runner.options.game_dir.join(&jar_path.replace("/", MAIN_SEPARATOR_STR));
+    let jar_file_path = &self.game_dir.join(&jar_path.replace("/", MAIN_SEPARATOR_STR));
 
     let info = local_version.get_download_url(DownloadType::Client);
-    let http_client = game_runner.options.proxy.create_http_client();
-    if let Some(info) = info {
-      download_job.add_downloadables(vec![Box::new(PreHashedDownloadable::new(http_client, &info.url, &jar_file_path, false, info.sha1.clone()))]);
+    let http_client = proxy.create_http_client();
+
+    let downloadable: Box<dyn Downloadable + Send + Sync> = if let Some(info) = info {
+      Box::new(PreHashedDownloadable::new(http_client, &info.url, &jar_file_path, false, info.sha1.clone()))
     } else {
       let url = format!("https://s3.amazonaws.com/Minecraft.Download/{jar_path}");
-      download_job.add_downloadables(vec![Box::new(EtagDownloadable::new(http_client, &url, &jar_file_path, false))]);
-    }
+      Box::new(EtagDownloadable::new(http_client, &url, &jar_file_path, false))
+    };
+    downloadables.push(downloadable);
 
-    Ok(())
+    downloadables
   }
 
   pub async fn get_resource_files(
