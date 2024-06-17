@@ -3,7 +3,10 @@ use std::{ collections::HashMap, path::PathBuf };
 use reqwest::Url;
 use serde::{ Deserialize, Serialize };
 
-use crate::{ download_utils::{ ChecksummedDownloadable, Downloadable, PreHashedDownloadable, ProxyOptions }, json::EnvironmentFeatures };
+use crate::{
+  download_utils::{ downloadables::{ ChecksummedDownloadable, Downloadable, PreHashedDownloadable }, ProxyOptions },
+  json::EnvironmentFeatures,
+};
 
 use super::{ artifact::Artifact, rule::{ OperatingSystem, Rule, RuleAction }, DownloadInfo };
 

@@ -6,7 +6,7 @@ use log::{ info, error, warn };
 
 use crate::{ bootstrap::MinecraftLauncherError, progress_reporter::ProgressReporter };
 
-use super::Downloadable;
+use super::downloadables::Downloadable;
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 

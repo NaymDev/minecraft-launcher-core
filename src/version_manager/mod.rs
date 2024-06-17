@@ -12,8 +12,7 @@ use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
-  bootstrap::GameBootstrap,
-  download_utils::{ download_job::DownloadJob, AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable, ProxyOptions },
+  download_utils::{ downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable }, ProxyOptions },
   json::{
     manifest::{ assets::AssetIndex, download::DownloadType, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,
