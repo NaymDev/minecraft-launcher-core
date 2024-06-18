@@ -45,20 +45,10 @@ impl Default for DownloadJob {
 }
 
 impl DownloadJob {
-  pub fn new(
-    name: &str /* , ignore_failures: bool, max_pool_size: u16, max_download_attempts: u8, progress_reporter: &Arc<ProgressReporter>*/
-  ) -> Self {
+  pub fn new(name: &str) -> Self {
     Self {
       name: name.to_string(),
       ..Self::default()
-      //all_files,
-      //remaining_files: Arc::new(Mutex::new(VecDeque::new())),
-      //failures: Arc::new(Mutex::new(vec![])),
-      //ignore_failures,
-      //max_pool_size,
-      //max_download_attempts,
-      //progress_reporter,
-      //downloadable_progress_reporter,
     }
   }
 
