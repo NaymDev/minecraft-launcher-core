@@ -4,6 +4,7 @@ use std::sync::{ Arc, Mutex };
 use crate::progress_reporter::ProgressReporter;
 
 pub mod downloadables;
+pub mod error;
 
 #[derive(Debug, Clone, Default)]
 pub enum ProxyOptions {
