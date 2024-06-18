@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::Client;
 
-use super::DownloadableMonitor;
+use super::{ error::Error, DownloadableMonitor };
 
 mod checksummed;
 mod prehashed;
@@ -31,17 +31,16 @@ pub trait Downloadable: Send + Sync {
   fn get_end_time(&self) -> Option<u64>;
   fn set_end_time(&self, end_time: u64);
 
-  fn ensure_file_writable(&self, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    // let target = self.get_target_file();
+  fn ensure_file_writable(&self, file: &PathBuf) -> Result<(), Error> {
     if let Some(parent) = file.parent() {
       if !parent.is_dir() {
         info!("Making directory {}", parent.display());
-        create_dir_all(parent)?;
+        create_dir_all(parent).map_err(Error::PrepareFolderError)?;
       }
     }
 
     Ok(())
   }
 
-  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>>;
+  async fn download(&self, client: &Client) -> Result<(), Error>;
 }

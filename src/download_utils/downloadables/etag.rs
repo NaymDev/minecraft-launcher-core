@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::{ header::HeaderValue, Client };
 
-use crate::download_utils::DownloadableMonitor;
+use crate::download_utils::{ error::Error, DownloadableMonitor };
 
 use super::Downloadable;
 
@@ -90,8 +90,10 @@ impl Downloadable for EtagDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
-    *self.attempts.lock()? += 1;
+  async fn download(&self, client: &Client) -> Result<(), Error> {
+    if let Ok(mut attempts) = self.attempts.lock() {
+      *attempts += 1;
+    }
     self.ensure_file_writable(&self.target_file)?;
 
     let target = &self.target_file;
@@ -110,15 +112,7 @@ impl Downloadable for EtagDownloadable {
       info!("Downloaded successfully and etag matched");
       return Ok(());
     } else {
-      Err(
-        Box::new(
-          std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Couldn't connect to server (responded with {}), but have local file, assuming it's good", etag)
-          )
-        )
-      )?;
+      return Err(Error::Other(format!("Couldn't connect to server (responded with {}), but have local file, assuming it's good", etag)));
     }
-    Ok(())
   }
 }

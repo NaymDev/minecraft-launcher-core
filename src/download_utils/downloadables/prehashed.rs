@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::Client;
 
-use crate::{ download_utils::DownloadableMonitor, json::Sha1Sum };
+use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::Sha1Sum };
 
 use super::Downloadable;
 
@@ -79,8 +79,10 @@ impl Downloadable for PreHashedDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
-    *self.attempts.lock()? += 1;
+  async fn download(&self, client: &Client) -> Result<(), Error> {
+    if let Ok(mut attempts) = self.attempts.lock() {
+      *attempts += 1;
+    }
     self.ensure_file_writable(&self.target_file)?;
     let target = self.get_target_file();
     if target.is_file() {
@@ -99,20 +101,13 @@ impl Downloadable for PreHashedDownloadable {
     let bytes = res.bytes().await?;
     let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
     fs::write(&target, &bytes)?;
-    if local_hash == self.expected_hash {
-      info!("Downloaded successfully and checksum matched");
-      return Ok(());
-    } else {
-      Err(
-        Box::new(
-          std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Checksum did not match downloaded file (Checksum was {}, downloaded {})", self.expected_hash, local_hash)
-          )
-        )
-      )?;
+    if local_hash != self.expected_hash {
+      return Err(Error::ChecksumMismatch {
+        expected: self.expected_hash.clone(),
+        actual: local_hash,
+      });
     }
-
+    info!("Downloaded successfully and checksum matched");
     Ok(())
   }
 }

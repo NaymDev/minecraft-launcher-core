@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::Client;
 
-use crate::{ download_utils::DownloadableMonitor, json::Sha1Sum };
+use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::Sha1Sum };
 
 use super::Downloadable;
 
@@ -86,8 +86,10 @@ impl Downloadable for ChecksummedDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
-    *self.attempts.lock()? += 1;
+  async fn download(&self, client: &Client) -> Result<(), Error> {
+    if let Ok(mut attempts) = self.attempts.lock() {
+      *attempts += 1;
+    }
 
     let mut local_hash = None;
     let mut expected_hash = None;
@@ -125,16 +127,11 @@ impl Downloadable for ChecksummedDownloadable {
         info!("Downloaded successfully and checksum matched");
         return Ok(());
       } else {
-        Err(
-          Box::new(
-            std::io::Error::new(
-              std::io::ErrorKind::Other,
-              format!("Checksum did not match downloaded file (Checksum was {}, downloaded {})", expected_hash.unwrap(), local_hash.unwrap())
-            )
-          )
-        )?;
+        return Err(Error::ChecksumMismatch {
+          expected: expected_hash.unwrap(),
+          actual: local_hash.unwrap(),
+        });
       }
     }
-    Ok(())
   }
 }

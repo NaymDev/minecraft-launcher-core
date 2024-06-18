@@ -5,7 +5,7 @@ use libflate::non_blocking::gzip;
 use log::{ info, warn };
 use reqwest::{ Client, Url };
 
-use crate::{ bootstrap::MinecraftLauncherError, download_utils::DownloadableMonitor, json::{ manifest::assets::AssetObject, Sha1Sum } };
+use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::{ manifest::assets::AssetObject, Sha1Sum } };
 
 use super::Downloadable;
 
@@ -49,7 +49,7 @@ impl AssetDownloadable {
     }
   }
 
-  fn decompress_asset(&self, target: &PathBuf, compressed_target: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+  fn decompress_asset(&self, target: &PathBuf, compressed_target: &PathBuf) -> Result<(), Error> {
     if let Ok(mut status) = self.status.lock() {
       *status = AssetDownloadableStatus::Extracting;
     }
@@ -64,11 +64,9 @@ impl AssetDownloadable {
       info!("Had local compressed asset, unpacked successfully and hash matched");
     } else {
       fs::remove_file(target)?;
-      Err(
-        MinecraftLauncherError(
-          format!("Had local compressed asset but unpacked hash did not match (expected {}, but had {})", self.asset.hash, local_sha1)
-        )
-      )?;
+      return Err(
+        Error::Other(format!("Had local compressed asset but unpacked hash did not match (expected {}, but had {})", self.asset.hash, local_sha1))
+      );
     }
     Ok(())
   }
@@ -116,8 +114,11 @@ impl Downloadable for AssetDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
-    *self.attempts.lock()? += 1;
+  async fn download(&self, client: &Client) -> Result<(), Error> {
+    if let Ok(mut attempts) = self.attempts.lock() {
+      *attempts += 1;
+    }
+
     if let Ok(mut status) = self.status.lock() {
       *status = AssetDownloadableStatus::Downloading;
     }
@@ -130,7 +131,7 @@ impl Downloadable for AssetDownloadable {
     };
     let url = self.url();
     let compressed_url = if self.asset.has_compressed_alternative() {
-      let mut url = Url::parse(&self.url_base)?;
+      let mut url = Url::parse(&self.url_base).map_err(|_| Error::UrlParseError(self.url_base.clone()))?;
       url.set_path(&AssetObject::create_path_from_hash(self.asset.compressed_hash.as_ref().unwrap()));
       Some(url.to_string())
     } else {
@@ -176,15 +177,15 @@ impl Downloadable for AssetDownloadable {
         return self.decompress_asset(target, &compressed_target);
       } else {
         fs::remove_file(&compressed_target)?;
-        Err(
-          MinecraftLauncherError(
+        return Err(
+          Error::Other(
             format!(
               "Hash did not match downloaded compressed asset (Expected {}, downloaded {})",
               self.asset.compressed_hash.as_ref().unwrap(),
               local_hash
             )
           )
-        )?;
+        );
       }
     } else {
       let res = client.get(url).send().await?.error_for_status()?;
@@ -199,11 +200,9 @@ impl Downloadable for AssetDownloadable {
         return Ok(());
       } else {
         fs::remove_file(target)?;
-        Err(MinecraftLauncherError(format!("Hash did not match downloaded asset (Expected {}, downloaded {})", self.asset.hash, local_hash)))?;
+        Err(Error::Other(format!("Hash did not match downloaded asset (Expected {}, downloaded {})", self.asset.hash, local_hash)))
       }
     }
-
-    Ok(())
   }
 }
 
