@@ -5,9 +5,9 @@ use futures::future::join_all;
 use log::{ info, error, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client };
 
-use crate::{ bootstrap::MinecraftLauncherError, progress_reporter::ProgressReporter };
+use crate::progress_reporter::ProgressReporter;
 
-use super::{ downloadables::Downloadable, ProxyOptions };
+use super::{ downloadables::Downloadable, error::Error, ProxyOptions };
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 
@@ -89,18 +89,17 @@ impl DownloadJob {
     self
   }
 
-  pub async fn start(self) -> Result<(), Box<dyn std::error::Error>> {
+  pub async fn start(self) -> Result<(), Error> {
     self.progress_reporter.clear();
 
     let start_time = Utc::now();
-    let mut futures = vec![];
-    for _ in 0..self.max_pool_size {
-      let job_name = self.name.clone();
-      let client = self.client.clone();
-      let remaining_files = Arc::clone(&self.remaining_files);
-      let failures = Arc::clone(&self.failures);
-      futures.push(
-        tokio::spawn(async move {
+    let futures = (0..self.max_pool_size)
+      .map(|_| {
+        let job_name = self.name.clone();
+        let client = self.client.clone();
+        let remaining_files = Arc::clone(&self.remaining_files);
+        let failures = Arc::clone(&self.failures);
+        return tokio::spawn(async move {
           fn pop_downloadable(remaining_files: &Arc<Mutex<VecDeque<DownloadableSync>>>) -> Option<DownloadableSync> {
             let mut remaining_files = remaining_files.lock().unwrap();
             remaining_files.pop_front()
@@ -141,15 +140,15 @@ impl DownloadJob {
               }
             }
           }
-        })
-      );
-    }
-
+        });
+      })
+      .collect::<Vec<_>>();
     join_all(futures).await;
+
     let total_time = Utc::now().signed_duration_since(start_time).num_seconds();
     let failures = self.failures.lock().unwrap();
     if !failures.is_empty() {
-      Err(MinecraftLauncherError(format!("Job '{}' finished with {} failure(s)! (took {}s)", self.name, failures.len(), total_time)))?;
+      return Err(Error::JobFailed { name: self.name, failures: failures.len(), total_time });
     } else {
       info!("Job '{}' finished successfully (took {}s)", self.name, total_time);
     }

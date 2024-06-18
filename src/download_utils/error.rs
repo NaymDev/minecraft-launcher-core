@@ -14,4 +14,10 @@ pub enum Error {
   #[error("failed to prepare destination folder: {0}")] PrepareFolderError(std::io::Error),
   #[error("Couldn't parse URL: {0}")] UrlParseError(String),
   #[error("{0}")] Other(String),
+
+  #[error("Job '{name}' finished with {failures} failure(s)! (took {total_time}s)")] JobFailed {
+    name: String,
+    failures: usize,
+    total_time: i64,
+  },
 }
