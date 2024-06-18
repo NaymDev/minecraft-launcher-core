@@ -1,4 +1,4 @@
-use std::{ fs::create_dir_all, path::PathBuf, sync::Arc };
+use std::{ fs::create_dir_all, path::{ Path, PathBuf }, sync::Arc };
 
 use async_trait::async_trait;
 use log::info;
@@ -31,7 +31,7 @@ pub trait Downloadable: Send + Sync {
   fn get_end_time(&self) -> Option<u64>;
   fn set_end_time(&self, end_time: u64);
 
-  fn ensure_file_writable(&self, file: &PathBuf) -> Result<(), Error> {
+  fn ensure_file_writable(&self, file: &Path) -> Result<(), Error> {
     if let Some(parent) = file.parent() {
       if !parent.is_dir() {
         info!("Making directory {}", parent.display());

@@ -99,14 +99,14 @@ impl DownloadJob {
         let client = self.client.clone();
         let remaining_files = Arc::clone(&self.remaining_files);
         let failures = Arc::clone(&self.failures);
-        return tokio::spawn(async move {
+        tokio::spawn(async move {
           fn pop_downloadable(remaining_files: &Arc<Mutex<VecDeque<DownloadableSync>>>) -> Option<DownloadableSync> {
             let mut remaining_files = remaining_files.lock().unwrap();
             remaining_files.pop_front()
           }
 
           while let Some(downloadable) = pop_downloadable(&remaining_files) {
-            if downloadable.get_start_time() == None {
+            if downloadable.get_start_time().is_none() {
               downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
             }
 
@@ -140,7 +140,7 @@ impl DownloadJob {
               }
             }
           }
-        });
+        })
       })
       .collect::<Vec<_>>();
     join_all(futures).await;

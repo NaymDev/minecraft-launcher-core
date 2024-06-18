@@ -14,17 +14,17 @@ impl ProgressReporter {
 
   pub fn set_status(&self, status: impl AsRef<str>) -> &Self {
     self.update(ProgressUpdate::SetStatus(status.as_ref().to_string()));
-    &self
+    self
   }
 
   pub fn set_progress(&self, progress: u32) -> &Self {
     self.update(ProgressUpdate::SetProgress(progress));
-    &self
+    self
   }
 
   pub fn set_total(&self, total: u32) -> &Self {
     self.update(ProgressUpdate::SetTotal(total));
-    &self
+    self
   }
 
   pub fn set(&self, status: impl AsRef<str>, progress: u32, total: u32) {

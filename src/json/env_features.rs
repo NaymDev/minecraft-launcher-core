@@ -49,6 +49,6 @@ impl EnvironmentFeatures {
         }
       }
     }
-    return true;
+    true
   }
 }

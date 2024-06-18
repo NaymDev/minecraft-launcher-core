@@ -34,7 +34,7 @@ impl StartupTrigger {
 impl Trigger for StartupTrigger {
   fn trigger(&self, file: &log4rs::append::rolling_file::LogFile) -> anyhow::Result<bool> {
     if *self.ran.lock().unwrap() {
-      return Ok(false);
+      Ok(false)
     } else {
       *self.ran.lock().unwrap() = true;
       Ok(file.len_estimate() > 0)

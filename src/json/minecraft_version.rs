@@ -1,9 +1,9 @@
-use std::fmt::Debug;
+use std::fmt::Display;
 
 use regex::Regex;
 use serde::{ Deserialize, Serialize };
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(untagged, from = "String", into = "String")]
 pub enum MCVersion {
   Release(i32, i32, Option<i32>), // 1.20.4 (major, minor, patch)
@@ -135,28 +135,28 @@ impl From<String> for MCVersion {
         .unwrap();
       return Self::ReleaseCandidate(major, minor, patch, rc);
     }
-    return Self::Other(value);
+    Self::Other(value)
   }
 }
 
-impl ToString for MCVersion {
-  fn to_string(&self) -> String {
+impl Display for MCVersion {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match &self {
       Self::Release(major, minor, patch) => {
         let mut s = format!("{major}.{minor}");
         if let Some(patch) = patch {
           s.push_str(&format!(".{patch}"));
         }
-        s
+        write!(f, "{s}")
       }
-      Self::Snapshot(year, week, revision) => { format!("{year:02}w{week:02}{revision}") }
+      Self::Snapshot(year, week, revision) => { write!(f, "{year:02}w{week:02}{revision}") }
       Self::PreReleaseNew(major, minor, patch, prerelease) => {
         let mut s = format!("{major}.{minor}");
         if let Some(patch) = patch {
           s.push_str(&format!(".{patch}"));
         }
         s.push_str(&format!(" Pre-Release {prerelease}"));
-        s
+        write!(f, "{s}")
       }
       Self::PreReleaseOld(major, minor, patch, prerelease) => {
         let mut s = format!("{major}.{minor}");
@@ -164,7 +164,7 @@ impl ToString for MCVersion {
           s.push_str(&format!(".{patch}"));
         }
         s.push_str(&format!("-pre{prerelease}"));
-        s
+        write!(f, "{s}")
       }
       Self::ReleaseCandidate(major, minor, patch, rc) => {
         let mut s = format!("{major}.{minor}");
@@ -172,22 +172,16 @@ impl ToString for MCVersion {
           s.push_str(&format!(".{patch}"));
         }
         s.push_str(&format!("-rc{rc}"));
-        s
+        write!(f, "{s}")
       }
-      Self::Other(value) => value.clone(),
+      Self::Other(value) => write!(f, "{value}"),
     }
   }
 }
 
-impl Into<String> for MCVersion {
-  fn into(self) -> String {
-    self.to_string()
-  }
-}
-
-impl Debug for MCVersion {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.to_string())
+impl From<MCVersion> for String {
+  fn from(val: MCVersion) -> Self {
+    val.to_string()
   }
 }
 
@@ -214,7 +208,7 @@ mod tests {
   async fn test_full_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
     let version_list = RawVersionList::fetch().await?;
     for ver in version_list.versions {
-      println!("Processing {}", ver.get_id().to_string());
+      println!("Processing {}", ver.get_id());
       let ver = ver.fetch().await?;
       println!("{ver:#?}");
     }

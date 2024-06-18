@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
+#[derive(Debug, Default)]
 pub struct ArgumentSubstitutorBuilder {
   map: HashMap<String, String>,
 }
 
 impl ArgumentSubstitutorBuilder {
   pub fn new() -> Self {
-    Self { map: HashMap::new() }
+    Self::default()
   }
 
   pub fn add(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> &mut Self {
@@ -25,7 +26,7 @@ impl ArgumentSubstitutorBuilder {
     move |input| {
       let mut output = input;
       for (key, value) in &self.map {
-        output = output.replace(&format!("${{{}}}", key.to_string()), &value);
+        output = output.replace(&format!("${{{}}}", key), value);
       }
       output
     }

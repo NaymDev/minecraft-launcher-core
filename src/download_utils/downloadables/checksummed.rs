@@ -1,4 +1,4 @@
-use std::{ ffi::OsStr, fs::{ self, File }, io::Cursor, path::PathBuf, sync::{ Arc, Mutex } };
+use std::{ ffi::OsStr, fs::{ self, File }, io::Cursor, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
 use log::info;
@@ -21,7 +21,7 @@ pub struct ChecksummedDownloadable {
 }
 
 impl ChecksummedDownloadable {
-  pub fn new(url: &str, target_file: &PathBuf, force_download: bool) -> Self {
+  pub fn new(url: &str, target_file: &Path, force_download: bool) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
@@ -69,7 +69,7 @@ impl Downloadable for ChecksummedDownloadable {
   }
 
   fn get_start_time(&self) -> Option<u64> {
-    self.start_time.lock().unwrap().clone()
+    *self.start_time.lock().unwrap()
   }
 
   fn set_start_time(&self, start_time: u64) {
@@ -77,7 +77,7 @@ impl Downloadable for ChecksummedDownloadable {
   }
 
   fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
+    *self.end_time.lock().unwrap()
   }
 
   fn set_end_time(&self, end_time: u64) {
@@ -101,7 +101,7 @@ impl Downloadable for ChecksummedDownloadable {
     }
 
     if expected_hash.is_none() {
-      expected_hash = Some(self.get_remote_hash(&client).await.unwrap_or(Sha1Sum::null()));
+      expected_hash = Some(self.get_remote_hash(client).await.unwrap_or(Sha1Sum::null()));
     }
 
     if expected_hash.as_ref().unwrap() == &Sha1Sum::null() && target_file.is_file() {
@@ -117,7 +117,7 @@ impl Downloadable for ChecksummedDownloadable {
       }
       let bytes = res.bytes().await?;
       local_hash = Some(Sha1Sum::from_reader(&mut Cursor::new(&bytes))?);
-      fs::write(&target_file, &bytes)?;
+      fs::write(target_file, &bytes)?;
       if expected_hash.as_ref().unwrap() == &Sha1Sum::null() {
         info!("Didn't have checksum so assuming the downloaded file is good");
         return Ok(());

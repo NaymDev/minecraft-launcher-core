@@ -12,9 +12,9 @@ impl Date {
   }
 }
 
-impl Into<DateTime<FixedOffset>> for Date {
-  fn into(self) -> DateTime<FixedOffset> {
-    self.date
+impl From<Date> for DateTime<FixedOffset> {
+  fn from(val: Date) -> Self {
+    val.date
   }
 }
 

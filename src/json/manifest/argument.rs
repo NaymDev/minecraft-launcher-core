@@ -47,9 +47,9 @@ impl Argument {
         }
       }
 
-      return action == RuleAction::Allow;
+      action == RuleAction::Allow
     } else {
-      return true;
+      true
     }
   }
 }

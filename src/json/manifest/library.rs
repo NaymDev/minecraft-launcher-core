@@ -1,4 +1,4 @@
-use std::{ collections::HashMap, path::PathBuf };
+use std::{ collections::HashMap, path::Path };
 
 use reqwest::Url;
 use serde::{ Deserialize, Serialize };
@@ -36,7 +36,7 @@ impl Library {
       }
     }
 
-    return action == RuleAction::Allow;
+    action == RuleAction::Allow
   }
 
   pub fn get_artifact_path(&self, classifier: Option<&str>) -> String {
@@ -50,7 +50,7 @@ impl Library {
   pub fn create_download(
     &self,
     artifact_path: &str,
-    target_file: &PathBuf,
+    target_file: &Path,
     force_download: bool,
     classifier: Option<&str>
   ) -> Option<Box<dyn Downloadable + Send + Sync>> {
@@ -78,13 +78,13 @@ pub struct ExtractRules {
 }
 
 impl ExtractRules {
-  pub fn should_extract(&self, zip_path: &PathBuf) -> bool {
+  pub fn should_extract(&self, zip_path: &Path) -> bool {
     for entry in &self.exclude {
       if zip_path.starts_with(entry) {
         return false;
       }
     }
-    return true;
+    true
   }
 }
 

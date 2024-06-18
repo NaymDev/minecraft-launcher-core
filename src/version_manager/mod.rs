@@ -2,7 +2,7 @@ use std::{
   collections::HashSet,
   fs::{ self, create_dir_all, read_dir, File },
   io::Cursor,
-  path::{ PathBuf, MAIN_SEPARATOR_STR },
+  path::{ Path, PathBuf, MAIN_SEPARATOR_STR },
   sync::{ Arc, Mutex },
 };
 
@@ -45,18 +45,13 @@ impl VersionManager {
   }
 
   pub fn installed_versions(&self) -> Vec<MCVersion> {
-    if let Ok(local_cache) = self.local_cache.try_lock() {
-      return local_cache.to_vec();
-    } else {
-      return vec![];
-    }
+    if let Ok(local_cache) = self.local_cache.try_lock() { local_cache.to_vec() } else { vec![] }
   }
 
   pub fn remote_versions(&self) -> Vec<&MCVersion> {
     self.remote_cache
       .iter()
-      .map(|raw| &raw.versions)
-      .flatten()
+      .flat_map(|raw| &raw.versions)
       .map(|v| v.get_id())
       .collect()
   }
@@ -64,8 +59,7 @@ impl VersionManager {
   pub fn get_remote_version(&self, version_id: &MCVersion) -> Option<&RemoteVersionInfo> {
     self.remote_cache
       .iter()
-      .map(|raw| &raw.versions)
-      .flatten()
+      .flat_map(|raw| &raw.versions)
       .find(|v| v.get_id() == version_id)
   }
 
@@ -109,8 +103,7 @@ impl VersionManager {
         let dir_names: Vec<String> = dir
           .filter_map(|entry| entry.ok())
           .filter(|entry| entry.path().is_dir())
-          .map(|entry| entry.file_name().into_string())
-          .flatten()
+          .flat_map(|entry| entry.file_name().into_string())
           .collect();
 
         let mut versions = vec![];
@@ -146,7 +139,7 @@ impl VersionManager {
       return Err(LoadVersionError::ManifestNotFound);
     }
     let manifest_file = File::open(&manifest_path)?;
-    return Ok(serde_json::from_reader(manifest_file)?);
+    Ok(serde_json::from_reader(manifest_file)?)
   }
 }
 
@@ -155,7 +148,7 @@ impl VersionManager {
 impl VersionManager {
   pub async fn install_version_by_id(&self, version_id: &MCVersion) -> Result<VersionManifest, InstallVersionError> {
     if let Some(remote_version) = self.get_remote_version(version_id) {
-      return self.install_version(&remote_version).await;
+      return self.install_version(remote_version).await;
     }
     Err(InstallVersionError::VersionNotFound(version_id.to_string()))
   }
@@ -167,7 +160,7 @@ impl VersionManager {
     let target_dir = self.versions_dir().join(&version_id);
     create_dir_all(&target_dir)?;
     let target_json = target_dir.join(format!("{}.json", &version_id));
-    serde_json::to_writer_pretty(&File::create(&target_json)?, &version_manifest)?;
+    serde_json::to_writer_pretty(&File::create(target_json)?, &version_manifest)?;
 
     if let Ok(mut local_cache) = self.local_cache.lock() {
       local_cache.push(version_manifest.get_id().clone());
@@ -190,12 +183,10 @@ impl VersionManager {
       }
 
       match version_manifest.resolve(self, HashSet::new()).await {
-        Ok(resolved) => {
-          return self.has_all_files(&resolved, &OperatingSystem::get_current_platform());
-        }
+        Ok(resolved) => { self.has_all_files(&resolved, &OperatingSystem::get_current_platform()) }
         Err(_) => {
           error!("Failed to resolve version {}", version_manifest.get_id().to_string());
-          return self.has_all_files(version_manifest, &OperatingSystem::get_current_platform());
+          self.has_all_files(version_manifest, &OperatingSystem::get_current_platform())
         }
       }
     } else {
@@ -213,15 +204,15 @@ impl VersionManager {
 
     let jar_id = local_version.get_jar().to_string();
     let jar_path = format!("versions/{}/{}.jar", &jar_id, &jar_id);
-    let jar_file_path = &self.game_dir.join(&jar_path.replace("/", MAIN_SEPARATOR_STR));
+    let jar_file_path = &self.game_dir.join(jar_path.replace('/', MAIN_SEPARATOR_STR));
 
     let info = local_version.get_download_url(DownloadType::Client);
 
     let downloadable: Box<dyn Downloadable + Send + Sync> = if let Some(info) = info {
-      Box::new(PreHashedDownloadable::new(&info.url, &jar_file_path, false, info.sha1.clone()))
+      Box::new(PreHashedDownloadable::new(&info.url, jar_file_path, false, info.sha1.clone()))
     } else {
       let url = format!("https://s3.amazonaws.com/Minecraft.Download/{jar_path}");
-      Box::new(EtagDownloadable::new(&url, &jar_file_path, false))
+      Box::new(EtagDownloadable::new(&url, jar_file_path, false))
     };
     downloadables.push(downloadable);
 
@@ -230,7 +221,7 @@ impl VersionManager {
 
   pub async fn get_resource_files(
     &self,
-    game_dir: &PathBuf,
+    game_dir: &Path,
     local_version: &VersionManifest
   ) -> Result<Vec<Box<dyn Downloadable + Send + Sync>>, Box<dyn std::error::Error>> {
     let assets_dir = game_dir.join("assets");
@@ -270,11 +261,11 @@ mod tests {
   #[tokio::test]
   async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
     SimpleLogger::new().init().unwrap();
-    let mut version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), EnvironmentFeatures::default()).await?;
+    let version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), EnvironmentFeatures::default()).await?;
     info!("{:#?}", version_manager.local_cache);
     let local = version_manager.get_installed_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
     if let Ok(local) = local {
-      let resolved = local.resolve(&mut version_manager, HashSet::new()).await?;
+      let resolved = local.resolve(&version_manager, HashSet::new()).await?;
       info!("Resolved: {:#?}", resolved);
     }
     Ok(())

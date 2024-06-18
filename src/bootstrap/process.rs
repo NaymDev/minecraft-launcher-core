@@ -1,4 +1,4 @@
-use std::{ process::{ Child, ChildStdout, ChildStderr, Command, Stdio }, io::BufReader, path::PathBuf, os::windows::process::CommandExt };
+use std::{ io::BufReader, os::windows::process::CommandExt, path::{ Path, PathBuf }, process::{ Child, ChildStderr, ChildStdout, Command, Stdio } };
 
 use crate::json::manifest::rule::OperatingSystem;
 
@@ -46,6 +46,7 @@ impl GameProcess {
   }
 }
 
+#[derive(Debug, Default)]
 pub struct GameProcessBuilder {
   arguments: Vec<String>,
   java_path: Option<PathBuf>,
@@ -54,15 +55,11 @@ pub struct GameProcessBuilder {
 
 impl GameProcessBuilder {
   pub fn new() -> Self {
-    Self {
-      java_path: None,
-      arguments: vec![],
-      directory: None,
-    }
+    Self::default()
   }
 
-  pub fn with_java_path(&mut self, java_path: &PathBuf) -> &mut Self {
-    self.java_path = Some(java_path.clone());
+  pub fn with_java_path(&mut self, java_path: &Path) -> &mut Self {
+    self.java_path = Some(java_path.to_path_buf());
     self
   }
 
@@ -80,8 +77,8 @@ impl GameProcessBuilder {
     self
   }
 
-  pub fn directory(&mut self, directory: &PathBuf) -> &mut Self {
-    self.directory = Some(directory.clone());
+  pub fn directory(&mut self, directory: &Path) -> &mut Self {
+    self.directory = Some(directory.to_path_buf());
     self
   }
 
@@ -92,7 +89,7 @@ impl GameProcessBuilder {
     if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
       args = args
         .into_iter()
-        .map(|arg| arg.replace("\"", "\\\""))
+        .map(|arg| arg.replace('"', "\\\""))
         .collect();
     }
     Ok(GameProcess::new(java_path, directory, args))

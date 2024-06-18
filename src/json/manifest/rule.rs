@@ -44,12 +44,12 @@ impl Rule {
     }
 
     // If there's some feature restriction, check if it's met
-    if !env_features.compatible(&self) {
+    if !env_features.compatible(self) {
       return None;
     }
 
     // Everything's fine, return the action
-    return Some(self.action.clone());
+    Some(self.action)
   }
 }
 
@@ -108,7 +108,7 @@ impl OsRestriction {
       }
     }
 
-    return true;
+    true
   }
 }
 

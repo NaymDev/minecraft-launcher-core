@@ -1,4 +1,4 @@
-use std::{ fmt::{ Debug, Display }, path::PathBuf };
+use std::{ fmt::{ Debug, Display }, path::{ Path, PathBuf } };
 
 use serde::{ Deserialize, Serialize };
 
@@ -47,8 +47,8 @@ impl Artifact {
     self.get_path_vec().join("/")
   }
 
-  pub fn get_local_path(&self, root: &PathBuf) -> PathBuf {
-    let mut root = root.clone();
+  pub fn get_local_path(&self, root: &Path) -> PathBuf {
+    let mut root = root.to_path_buf();
     for s in self.get_path_vec() {
       root = root.join(s);
     }
@@ -72,14 +72,14 @@ impl TryFrom<String> for Artifact {
   type Error = String;
   fn try_from(og_value: String) -> Result<Self, Self::Error> {
     let value = og_value.clone();
-    let (value, ext) = value.split_once("@").unwrap_or((&value, "jar"));
+    let (value, ext) = value.split_once('@').unwrap_or((&value, "jar"));
 
-    let parts: Vec<&str> = value.split(":").collect();
+    let parts: Vec<&str> = value.split(':').collect();
     if parts.len() < 3 {
       return Err(format!("Invalid artifact path: {}", value));
     }
     let group_id: Vec<String> = parts[0]
-      .split(".")
+      .split('.')
       .map(|s| s.to_string())
       .collect();
     let artifact_id = parts[1].to_string();
@@ -96,8 +96,8 @@ impl TryFrom<String> for Artifact {
   }
 }
 
-impl Into<String> for Artifact {
-  fn into(self) -> String {
-    self.get_descriptor()
+impl From<Artifact> for String {
+  fn from(val: Artifact) -> Self {
+    val.get_descriptor()
   }
 }

@@ -1,4 +1,4 @@
-use std::{ fs::{ self, File }, io::{ Cursor, Read }, path::{ PathBuf, MAIN_SEPARATOR_STR }, sync::{ Arc, Mutex } };
+use std::{ fs::{ self, File }, io::{ Cursor, Read }, path::{ Path, PathBuf, MAIN_SEPARATOR_STR }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
 use libflate::non_blocking::gzip;
@@ -26,12 +26,12 @@ pub struct AssetDownloadable {
 }
 
 impl AssetDownloadable {
-  pub fn new(name: &str, asset: &AssetObject, url_base: &str, objects_dir: &PathBuf) -> Self {
+  pub fn new(name: &str, asset: &AssetObject, url_base: &str, objects_dir: &Path) -> Self {
     let path = AssetObject::create_path_from_hash(&asset.hash);
     let mut url = Url::parse(url_base).unwrap();
     url.set_path(&path);
     let url = url.to_string();
-    let target_file = objects_dir.join(path.replace("/", MAIN_SEPARATOR_STR));
+    let target_file = objects_dir.join(path.replace('/', MAIN_SEPARATOR_STR));
     Self {
       url,
       target_file,
@@ -44,7 +44,7 @@ impl AssetDownloadable {
       status: Mutex::new(AssetDownloadableStatus::Downloading),
       asset: asset.clone(),
       url_base: url_base.to_string(),
-      destination: objects_dir.clone(),
+      destination: objects_dir.to_path_buf(),
       monitor: Arc::new(DownloadableMonitor::new(0, 5242880)),
     }
   }
@@ -99,7 +99,7 @@ impl Downloadable for AssetDownloadable {
   }
 
   fn get_start_time(&self) -> Option<u64> {
-    self.start_time.lock().unwrap().clone()
+    *self.start_time.lock().unwrap()
   }
 
   fn set_start_time(&self, start_time: u64) {
@@ -107,7 +107,7 @@ impl Downloadable for AssetDownloadable {
   }
 
   fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
+    *self.end_time.lock().unwrap()
   }
 
   fn set_end_time(&self, end_time: u64) {
@@ -139,7 +139,7 @@ impl Downloadable for AssetDownloadable {
     };
     self.ensure_file_writable(target)?;
     if let Some(compressed_target) = &compressed_target {
-      self.ensure_file_writable(&compressed_target)?;
+      self.ensure_file_writable(compressed_target)?;
     }
 
     if target.is_file() {
@@ -157,7 +157,7 @@ impl Downloadable for AssetDownloadable {
       if compressed_target.is_file() {
         let local_hash = Sha1Sum::from_reader(&mut File::open(compressed_target)?)?;
         if &local_hash == self.asset.compressed_hash.as_ref().unwrap() {
-          return self.decompress_asset(target, &compressed_target);
+          return self.decompress_asset(target, compressed_target);
         }
 
         warn!("Had local compressed but it was the wrong hash... expected {} but had {}", self.asset.compressed_hash.as_ref().unwrap(), local_hash);
@@ -174,9 +174,9 @@ impl Downloadable for AssetDownloadable {
       fs::write(compressed_target, &bytes)?;
       let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
       if &local_hash == self.asset.compressed_hash.as_ref().unwrap() {
-        return self.decompress_asset(target, &compressed_target);
+        return self.decompress_asset(target, compressed_target);
       } else {
-        fs::remove_file(&compressed_target)?;
+        fs::remove_file(compressed_target)?;
         return Err(
           Error::Other(
             format!(

@@ -1,4 +1,4 @@
-use std::{ ffi::OsStr, fs::{ self, File }, io::Cursor, path::PathBuf, sync::{ Arc, Mutex } };
+use std::{ ffi::OsStr, fs::{ self, File }, io::Cursor, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
 use log::info;
@@ -21,7 +21,7 @@ pub struct PreHashedDownloadable {
 }
 
 impl PreHashedDownloadable {
-  pub fn new(url: &str, target_file: &PathBuf, force_download: bool, expected_hash: Sha1Sum) -> Self {
+  pub fn new(url: &str, target_file: &Path, force_download: bool, expected_hash: Sha1Sum) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
@@ -64,7 +64,7 @@ impl Downloadable for PreHashedDownloadable {
   }
 
   fn get_start_time(&self) -> Option<u64> {
-    self.start_time.lock().unwrap().clone()
+    *self.start_time.lock().unwrap()
   }
 
   fn set_start_time(&self, start_time: u64) {
@@ -72,7 +72,7 @@ impl Downloadable for PreHashedDownloadable {
   }
 
   fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
+    *self.end_time.lock().unwrap()
   }
 
   fn set_end_time(&self, end_time: u64) {
@@ -100,7 +100,7 @@ impl Downloadable for PreHashedDownloadable {
     }
     let bytes = res.bytes().await?;
     let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
-    fs::write(&target, &bytes)?;
+    fs::write(target, &bytes)?;
     if local_hash != self.expected_hash {
       return Err(Error::ChecksumMismatch {
         expected: self.expected_hash.clone(),

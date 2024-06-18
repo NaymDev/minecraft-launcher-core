@@ -47,11 +47,11 @@ impl UserAuthentication {
     if token.is_empty() {
       return None;
     }
-    let parts: Vec<&str> = token.split(".").collect();
+    let parts: Vec<&str> = token.split('.').collect();
     let decoded = URL_SAFE.decode(parts.get(1)?).ok()?;
     let json: Value = serde_json::from_slice(&decoded).ok()?;
     let xuid = json["xuid"].as_str()?;
-    return Some(xuid.to_string());
+    Some(xuid.to_string())
   }
 
   pub fn user_type(&self) -> &str {

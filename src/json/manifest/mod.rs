@@ -1,4 +1,4 @@
-use std::{ collections::{ HashMap, HashSet }, path::{ PathBuf, MAIN_SEPARATOR_STR } };
+use std::{ collections::{ HashMap, HashSet }, path::{ Path, PathBuf, MAIN_SEPARATOR_STR } };
 
 use argument::{ Argument, ArgumentType };
 use assets::AssetIndexInfo;
@@ -73,7 +73,7 @@ impl VersionManifest {
   pub fn get_required_downloadables(
     &self,
     os: &OperatingSystem,
-    mc_dir: &PathBuf,
+    mc_dir: &Path,
     force_download: bool,
     env_features: &EnvironmentFeatures
   ) -> Vec<Box<dyn Downloadable + Send + Sync>> {
@@ -142,15 +142,15 @@ impl VersionManifest {
       }
     }
 
-    return action == RuleAction::Allow;
+    action == RuleAction::Allow
   }
 
-  pub fn get_classpath(&self, _os: &OperatingSystem, mc_dir: &PathBuf, env_features: &EnvironmentFeatures) -> Vec<PathBuf> {
+  pub fn get_classpath(&self, _os: &OperatingSystem, mc_dir: &Path, env_features: &EnvironmentFeatures) -> Vec<PathBuf> {
     let mut vec = vec![];
     let libraries = self.get_relevant_libraries(env_features);
     for library in libraries {
       if library.natives.is_empty() {
-        vec.push(mc_dir.join("libraries").join(library.get_artifact_path(None).replace("/", MAIN_SEPARATOR_STR)));
+        vec.push(mc_dir.join("libraries").join(library.get_artifact_path(None).replace('/', MAIN_SEPARATOR_STR)));
       }
     }
 
@@ -175,7 +175,7 @@ impl VersionManifest {
         .map(|ver| ver.to_string())
         .collect::<Vec<_>>();
       trace.reverse();
-      Err(MinecraftLauncherError(format!("Circular dependency detected! {} -> [{}]", trace.join(" -> "), self.id.to_string())))?;
+      Err(MinecraftLauncherError(format!("Circular dependency detected! {} -> [{}]", trace.join(" -> "), self.id)))?;
     }
 
     let local_version: VersionManifest = if let Ok(local_version) = version_manager.get_installed_version(inherits_from) {

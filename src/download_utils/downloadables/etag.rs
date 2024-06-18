@@ -1,4 +1,4 @@
-use std::{ ffi::OsStr, fs, path::PathBuf, sync::{ Arc, Mutex } };
+use std::{ ffi::OsStr, fs, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
 use log::info;
@@ -20,7 +20,7 @@ pub struct EtagDownloadable {
 }
 
 impl EtagDownloadable {
-  pub fn new(url: &str, target_file: &PathBuf, force_download: bool) -> Self {
+  pub fn new(url: &str, target_file: &Path, force_download: bool) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
@@ -34,16 +34,11 @@ impl EtagDownloadable {
   }
 
   fn get_etag(etag: Option<&HeaderValue>) -> String {
-    let etag = etag.and_then(|v| v.to_str().ok());
-    if let Some(etag) = etag {
-      if etag.starts_with("\"") && etag.ends_with("\"") {
-        return etag[1..etag.len() - 1].to_string();
-      } else {
-        return etag.to_string();
-      }
-    } else {
-      "-".to_string()
+    let etag = etag.and_then(|v| v.to_str().ok()).unwrap_or("-");
+    if etag.starts_with('"') && etag.ends_with('"') {
+      return etag[1..etag.len() - 1].to_string();
     }
+    etag.to_string()
   }
 }
 
@@ -75,7 +70,7 @@ impl Downloadable for EtagDownloadable {
   }
 
   fn get_start_time(&self) -> Option<u64> {
-    self.start_time.lock().unwrap().clone()
+    *self.start_time.lock().unwrap()
   }
 
   fn set_start_time(&self, start_time: u64) {
@@ -83,7 +78,7 @@ impl Downloadable for EtagDownloadable {
   }
 
   fn get_end_time(&self) -> Option<u64> {
-    self.end_time.lock().unwrap().clone()
+    *self.end_time.lock().unwrap()
   }
 
   fn set_end_time(&self, end_time: u64) {
@@ -104,11 +99,11 @@ impl Downloadable for EtagDownloadable {
     let etag = Self::get_etag(res.headers().get("ETag"));
     let bytes = res.bytes().await?;
     let md5 = md5::compute(&bytes).0;
-    fs::write(&target, &bytes)?;
-    if etag.contains("-") {
+    fs::write(target, &bytes)?;
+    if etag.contains('-') {
       info!("Didn't have etag so assuming our copy is good");
       return Ok(());
-    } else if etag.as_bytes() == &md5 {
+    } else if etag.as_bytes() == md5 {
       info!("Downloaded successfully and etag matched");
       return Ok(());
     } else {

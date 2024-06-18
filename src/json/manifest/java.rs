@@ -10,7 +10,7 @@ pub struct JavaVersionInfo {
 impl Default for JavaVersionInfo {
   fn default() -> Self {
     Self {
-      component: format!("jre-legacy"),
+      component: "jre-legacy".to_string(),
       major_version: 8,
     }
   }

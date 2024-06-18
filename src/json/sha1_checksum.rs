@@ -35,9 +35,9 @@ impl TryFrom<String> for Sha1Sum {
   }
 }
 
-impl Into<String> for Sha1Sum {
-  fn into(self) -> String {
-    hex::encode(self.0)
+impl From<Sha1Sum> for String {
+  fn from(val: Sha1Sum) -> Self {
+    hex::encode(val.0)
   }
 }
 
