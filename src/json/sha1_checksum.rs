@@ -15,9 +15,7 @@ impl Sha1Sum {
 
   pub fn from_reader<T: Read>(value: &mut T) -> Result<Self, Sha1SumError> {
     let mut sha1_hasher = Sha1::new();
-    let mut buf = vec![];
-    value.read_to_end(&mut buf)?;
-    sha1_hasher.update(&buf);
+    std::io::copy(value, &mut sha1_hasher)?;
     Ok(Sha1Sum(sha1_hasher.finalize().into()))
   }
 

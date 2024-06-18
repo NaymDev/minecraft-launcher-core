@@ -1,8 +1,11 @@
-use std::{ ffi::OsStr, fs::{ self, File }, io::Cursor, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
+use std::{ ffi::OsStr, fs::File, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use log::info;
 use reqwest::Client;
+use sha1::{ Digest, Sha1 };
+use tokio::io::AsyncWriteExt;
 
 use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::Sha1Sum };
 
@@ -115,19 +118,26 @@ impl Downloadable for ChecksummedDownloadable {
       if let Some(content_len) = res.content_length() {
         self.monitor.set_total(content_len as usize);
       }
-      let bytes = res.bytes().await?;
-      local_hash = Some(Sha1Sum::from_reader(&mut Cursor::new(&bytes))?);
-      fs::write(target_file, &bytes)?;
+
+      let mut file = tokio::fs::File::create(target_file).await?;
+      let mut sha1 = Sha1::new();
+      let mut bytes_stream = res.bytes_stream();
+      while let Some(Ok(chunk)) = bytes_stream.next().await {
+        file.write_all(&chunk).await?;
+        file.flush().await?;
+        sha1.update(&chunk);
+      }
+      let local_hash = Sha1Sum::new(sha1.finalize().into());
       if expected_hash.as_ref().unwrap() == &Sha1Sum::null() {
         info!("Didn't have checksum so assuming the downloaded file is good");
         return Ok(());
-      } else if expected_hash == local_hash {
+      } else if expected_hash == Some(local_hash.clone()) {
         info!("Downloaded successfully and checksum matched");
         return Ok(());
       } else {
         return Err(Error::ChecksumMismatch {
           expected: expected_hash.unwrap(),
-          actual: local_hash.unwrap(),
+          actual: local_hash,
         });
       }
     }

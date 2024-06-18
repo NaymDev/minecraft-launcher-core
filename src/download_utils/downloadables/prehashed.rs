@@ -1,8 +1,11 @@
-use std::{ ffi::OsStr, fs::{ self, File }, io::Cursor, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
+use std::{ ffi::OsStr, fs::{ self, File }, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use log::info;
 use reqwest::Client;
+use sha1::{ Digest, Sha1 };
+use tokio::io::AsyncWriteExt;
 
 use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::Sha1Sum };
 
@@ -98,9 +101,19 @@ impl Downloadable for PreHashedDownloadable {
     if let Some(content_len) = res.content_length() {
       self.monitor.set_total(content_len as usize);
     }
-    let bytes = res.bytes().await?;
-    let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
-    fs::write(target, &bytes)?;
+    //let bytes = res.bytes().await?;
+    //let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
+    //fs::write(target, &bytes)?;
+    let mut file = tokio::fs::File::create(target).await?;
+    let mut sha1 = Sha1::new();
+    let mut bytes_stream = res.bytes_stream();
+    while let Some(Ok(chunk)) = bytes_stream.next().await {
+      file.write_all(&chunk).await?;
+      file.flush().await?;
+      sha1.update(&chunk);
+    }
+    let local_hash = Sha1Sum::new(sha1.finalize().into());
+
     if local_hash != self.expected_hash {
       return Err(Error::ChecksumMismatch {
         expected: self.expected_hash.clone(),

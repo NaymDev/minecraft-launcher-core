@@ -1,9 +1,12 @@
 use std::{ fs::{ self, File }, io::{ Cursor, Read }, path::{ Path, PathBuf, MAIN_SEPARATOR_STR }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use libflate::non_blocking::gzip;
 use log::{ info, warn };
 use reqwest::{ Client, Url };
+use sha1::{ Digest, Sha1 };
+use tokio::io::AsyncWriteExt;
 
 use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::{ manifest::assets::AssetObject, Sha1Sum } };
 
@@ -170,9 +173,16 @@ impl Downloadable for AssetDownloadable {
       if let Some(content_len) = res.content_length() {
         self.monitor.set_total(content_len as usize);
       }
-      let bytes = res.bytes().await?;
-      fs::write(compressed_target, &bytes)?;
-      let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
+
+      let mut sha1 = Sha1::new();
+      let mut file = tokio::fs::File::create(compressed_target).await?;
+      let mut bytes_reader = res.bytes_stream();
+      while let Some(Ok(bytes)) = bytes_reader.next().await {
+        file.write_all(&bytes).await?;
+        file.flush().await?;
+        sha1.update(&bytes);
+      }
+      let local_hash = Sha1Sum::new(sha1.finalize().into());
       if &local_hash == self.asset.compressed_hash.as_ref().unwrap() {
         return self.decompress_asset(target, compressed_target);
       } else {
