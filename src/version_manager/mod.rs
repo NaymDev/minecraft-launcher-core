@@ -12,7 +12,7 @@ use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
-  download_utils::{ downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable }, ProxyOptions },
+  download_utils::downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
   json::{
     manifest::{ assets::AssetIndex, download::DownloadType, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,
@@ -203,10 +203,9 @@ impl VersionManager {
     }
   }
 
-  pub fn get_version_downloadables(&self, proxy: &ProxyOptions, local_version: &VersionManifest) -> Vec<Box<dyn Downloadable + Send + Sync>> {
+  pub fn get_version_downloadables(&self, local_version: &VersionManifest) -> Vec<Box<dyn Downloadable + Send + Sync>> {
     let mut downloadables = local_version.get_required_downloadables(
       &OperatingSystem::get_current_platform(),
-      proxy,
       &self.game_dir,
       false,
       &self.env_features
@@ -217,13 +216,12 @@ impl VersionManager {
     let jar_file_path = &self.game_dir.join(&jar_path.replace("/", MAIN_SEPARATOR_STR));
 
     let info = local_version.get_download_url(DownloadType::Client);
-    let http_client = proxy.create_http_client();
 
     let downloadable: Box<dyn Downloadable + Send + Sync> = if let Some(info) = info {
-      Box::new(PreHashedDownloadable::new(http_client, &info.url, &jar_file_path, false, info.sha1.clone()))
+      Box::new(PreHashedDownloadable::new(&info.url, &jar_file_path, false, info.sha1.clone()))
     } else {
       let url = format!("https://s3.amazonaws.com/Minecraft.Download/{jar_path}");
-      Box::new(EtagDownloadable::new(http_client, &url, &jar_file_path, false))
+      Box::new(EtagDownloadable::new(&url, &jar_file_path, false))
     };
     downloadables.push(downloadable);
 
@@ -232,7 +230,6 @@ impl VersionManager {
 
   pub async fn get_resource_files(
     &self,
-    proxy: &ProxyOptions,
     game_dir: &PathBuf,
     local_version: &VersionManifest
   ) -> Result<Vec<Box<dyn Downloadable + Send + Sync>>, Box<dyn std::error::Error>> {
@@ -253,9 +250,7 @@ impl VersionManager {
     let objects = asset_index.get_unique_objects();
     for (obj, value) in objects {
       // let hash = obj.hash.to_string();
-      let downloadable = Box::new(
-        AssetDownloadable::new(proxy.create_http_client(), value, obj, "https://resources.download.minecraft.net/", &objects_dir)
-      );
+      let downloadable = Box::new(AssetDownloadable::new(value, obj, "https://resources.download.minecraft.net/", &objects_dir));
       downloadable.monitor.set_total(obj.size as usize);
       vec.push(downloadable);
     }

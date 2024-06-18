@@ -3,10 +3,7 @@ use std::{ collections::HashMap, path::PathBuf };
 use reqwest::Url;
 use serde::{ Deserialize, Serialize };
 
-use crate::{
-  download_utils::{ downloadables::{ ChecksummedDownloadable, Downloadable, PreHashedDownloadable }, ProxyOptions },
-  json::EnvironmentFeatures,
-};
+use crate::{ download_utils::downloadables::{ ChecksummedDownloadable, Downloadable, PreHashedDownloadable }, json::EnvironmentFeatures };
 
 use super::{ artifact::Artifact, rule::{ OperatingSystem, Rule, RuleAction }, DownloadInfo };
 
@@ -52,28 +49,25 @@ impl Library {
 
   pub fn create_download(
     &self,
-    proxy: &ProxyOptions,
     artifact_path: &str,
     target_file: &PathBuf,
     force_download: bool,
     classifier: Option<&str>
   ) -> Option<Box<dyn Downloadable + Send + Sync>> {
-    let http_client = proxy.create_http_client();
-
     if let Some(url) = &self.url {
       let mut url = Url::parse(url).ok()?;
       url.set_path(&self.get_artifact_path(classifier));
-      Some(Box::new(ChecksummedDownloadable::new(http_client, url.as_str(), target_file, force_download)))
+      Some(Box::new(ChecksummedDownloadable::new(url.as_str(), target_file, force_download)))
     } else if let Some(downloads) = &self.downloads {
       if let Some(info) = downloads.get_download_info(classifier) {
-        Some(Box::new(PreHashedDownloadable::new(http_client, &info.url, target_file, force_download, info.sha1)))
+        Some(Box::new(PreHashedDownloadable::new(&info.url, target_file, force_download, info.sha1)))
       } else {
         None
       }
     } else {
       let mut url = Url::parse("https://libraries.minecraft.net/").ok()?;
       url.set_path(artifact_path);
-      Some(Box::new(ChecksummedDownloadable::new(http_client, url.as_str(), target_file, force_download)))
+      Some(Box::new(ChecksummedDownloadable::new(url.as_str(), target_file, force_download)))
     }
   }
 }

@@ -10,7 +10,7 @@ use logging::LoggingEntry;
 use rule::{ OperatingSystem, Rule, RuleAction };
 use serde::{ Deserialize, Serialize };
 
-use crate::{ bootstrap::MinecraftLauncherError, download_utils::{ downloadables::Downloadable, ProxyOptions }, version_manager::VersionManager };
+use crate::{ bootstrap::MinecraftLauncherError, download_utils::downloadables::Downloadable, version_manager::VersionManager };
 
 use super::{ Date, EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo };
 
@@ -73,7 +73,6 @@ impl VersionManifest {
   pub fn get_required_downloadables(
     &self,
     os: &OperatingSystem,
-    proxy: &ProxyOptions,
     mc_dir: &PathBuf,
     force_download: bool,
     env_features: &EnvironmentFeatures
@@ -96,7 +95,7 @@ impl VersionManifest {
       }
 
       let file = name.get_local_path(&mc_dir.join("libraries"));
-      let downloadable = lib.create_download(proxy, &name.get_path_string(), &file, force_download, classifier);
+      let downloadable = lib.create_download(&name.get_path_string(), &file, force_download, classifier);
       if let Some(downloadable) = downloadable {
         vec.push(downloadable);
       }

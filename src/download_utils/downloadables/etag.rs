@@ -11,7 +11,6 @@ use super::Downloadable;
 pub struct EtagDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -21,11 +20,10 @@ pub struct EtagDownloadable {
 }
 
 impl EtagDownloadable {
-  pub fn new(http_client: Client, url: &str, target_file: &PathBuf, force_download: bool) -> Self {
+  pub fn new(url: &str, target_file: &PathBuf, force_download: bool) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
-      http_client,
       force_download,
       attempts: Arc::new(Mutex::new(0)),
       start_time: Arc::new(Mutex::new(None)),
@@ -51,10 +49,6 @@ impl EtagDownloadable {
 
 #[async_trait]
 impl Downloadable for EtagDownloadable {
-  fn get_http_client(&self) -> &Client {
-    &self.http_client
-  }
-
   fn url(&self) -> &String {
     &self.url
   }
@@ -96,12 +90,12 @@ impl Downloadable for EtagDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
+  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
     *self.attempts.lock()? += 1;
     self.ensure_file_writable(&self.target_file)?;
 
     let target = &self.target_file;
-    let res = self.make_connection(&self.url).await?;
+    let res = client.get(&self.url).send().await?.error_for_status()?;
     if let Some(content_len) = res.content_length() {
       self.monitor.set_total(content_len as usize);
     }

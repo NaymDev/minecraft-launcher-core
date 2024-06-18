@@ -17,8 +17,7 @@ pub use etag::EtagDownloadable;
 pub use asset::{ AssetDownloadable, AssetDownloadableStatus };
 
 #[async_trait]
-pub trait Downloadable {
-  fn get_http_client(&self) -> &Client;
+pub trait Downloadable: Send + Sync {
   fn url(&self) -> &String;
   fn get_target_file(&self) -> &PathBuf;
   fn force_download(&self) -> bool;
@@ -32,11 +31,6 @@ pub trait Downloadable {
   fn get_end_time(&self) -> Option<u64>;
   fn set_end_time(&self, end_time: u64);
 
-  async fn make_connection(&self, url: &str) -> reqwest::Result<reqwest::Response> {
-    // TODO: CHANGE and handle for each downloadable
-    self.get_http_client().get(url).send().await?.error_for_status()
-  }
-
   fn ensure_file_writable(&self, file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     // let target = self.get_target_file();
     if let Some(parent) = file.parent() {
@@ -49,5 +43,5 @@ pub trait Downloadable {
     Ok(())
   }
 
-  async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>>;
+  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>>;
 }

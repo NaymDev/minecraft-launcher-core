@@ -142,23 +142,20 @@ impl GameBootstrap {
 
   async fn download_required_files(&self, local_version: &VersionManifest) -> Result<(), Box<dyn std::error::Error>> {
     let version_manager = self.version_manager.as_ref().unwrap();
-    let mut job1 = DownloadJob::new(
-      "Version & Libraries",
-      false,
-      self.options.max_concurrent_downloads,
-      self.options.max_download_attempts,
-      self.progress_reporter()
-    );
-    job1.add_downloadables(version_manager.get_version_downloadables(&self.options.proxy, local_version));
 
-    let mut job2 = DownloadJob::new(
-      "Resources",
-      false,
-      self.options.max_concurrent_downloads,
-      self.options.max_download_attempts,
-      self.progress_reporter()
-    );
-    job2.add_downloadables(version_manager.get_resource_files(&self.options.proxy, &self.options.game_dir, &local_version).await.unwrap());
+    let mut job1 = DownloadJob::new("Version & Libraries")
+      .with_ignore_failures(false)
+      .with_max_pool_size(self.options.max_concurrent_downloads)
+      .with_max_download_attempts(self.options.max_download_attempts)
+      .with_progress_reporter(self.progress_reporter());
+    job1.add_downloadables(version_manager.get_version_downloadables(local_version));
+
+    let mut job2 = DownloadJob::new("Resources")
+      .with_ignore_failures(false)
+      .with_max_pool_size(self.options.max_concurrent_downloads)
+      .with_max_download_attempts(self.options.max_download_attempts)
+      .with_progress_reporter(self.progress_reporter());
+    job2.add_downloadables(version_manager.get_resource_files(&self.options.game_dir, &local_version).await.unwrap());
 
     job1.start().await?;
     job2.start().await?;
@@ -295,17 +292,15 @@ impl GameBootstrap {
       }
     }
 
-    // TODO: get proxy auth?
-    if let ProxyOptions::Proxy(url) = &self.options.proxy {
-      game_process_builder.with_arguments(vec!["--proxyHost".to_string(), url.host_str().unwrap().to_string()]);
-      game_process_builder.with_arguments(vec!["--proxyPort".to_string(), url.port().unwrap().to_string()]);
+    if let ProxyOptions::Proxy { host, port, username, password } = &self.options.proxy {
+      game_process_builder.with_arguments(vec!["--proxyHost", host, "--proxyPort", &port.to_string()]);
 
-      if !url.username().is_empty() {
-        game_process_builder.with_arguments(vec!["--proxyUser".to_string(), url.username().to_string()]);
+      if let Some(username) = username {
+        game_process_builder.with_arguments(vec!["--proxyUser", username]);
       }
 
-      if let Some(passowrd) = url.password() {
-        game_process_builder.with_arguments(vec!["--proxyPass".to_string(), passowrd.to_string()]);
+      if let Some(password) = password {
+        game_process_builder.with_arguments(vec!["--proxyPass", password]);
       }
     }
 

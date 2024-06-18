@@ -1,34 +1,32 @@
 pub mod download_job;
 
-use std::{ sync::{ Arc, Mutex }, time::Duration };
-use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy };
+use std::sync::{ Arc, Mutex };
 use crate::progress_reporter::ProgressReporter;
 
 pub mod downloadables;
 
 #[derive(Debug, Clone, Default)]
 pub enum ProxyOptions {
+  Proxy {
+    host: String,
+    port: u16,
+    username: Option<String>,
+    password: Option<String>,
+  },
   #[default] NoProxy,
-  Proxy(reqwest::Url),
 }
 
 impl ProxyOptions {
-  fn client_builder(&self) -> reqwest::ClientBuilder {
-    let mut builder = Client::builder();
-    if let ProxyOptions::Proxy(url) = self {
-      builder = builder.proxy(Proxy::all(url.as_str()).unwrap());
+  pub fn create_http_proxy(&self) -> Option<reqwest::Proxy> {
+    if let ProxyOptions::Proxy { host, port, username, password } = self {
+      let mut proxy = reqwest::Proxy::all(format!("{}:{}", host, port)).ok()?;
+      if let (Some(username), Some(password)) = (username, password) {
+        proxy = proxy.basic_auth(username, password);
+      }
+      Some(proxy)
+    } else {
+      None
     }
-    builder
-  }
-
-  pub fn create_http_client(&self) -> Client {
-    let mut headers = HeaderMap::new();
-    headers.append("Cache-Control", HeaderValue::from_static("no-store,max-age=0,no-cache"));
-    headers.append("Expires", HeaderValue::from_static("0"));
-    headers.append("Pragma", HeaderValue::from_static("no-cache"));
-
-    let builder = self.client_builder().default_headers(headers).timeout(Duration::from_secs(15));
-    builder.build().unwrap_or(Client::new())
   }
 }
 

@@ -12,7 +12,6 @@ use super::Downloadable;
 pub struct AssetDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -27,14 +26,13 @@ pub struct AssetDownloadable {
 }
 
 impl AssetDownloadable {
-  pub fn new(http_client: Client, name: &str, asset: &AssetObject, url_base: &str, objects_dir: &PathBuf) -> Self {
+  pub fn new(name: &str, asset: &AssetObject, url_base: &str, objects_dir: &PathBuf) -> Self {
     let path = AssetObject::create_path_from_hash(&asset.hash);
     let mut url = Url::parse(url_base).unwrap();
     url.set_path(&path);
     let url = url.to_string();
     let target_file = objects_dir.join(path.replace("/", MAIN_SEPARATOR_STR));
     Self {
-      http_client,
       url,
       target_file,
       force_download: false,
@@ -78,10 +76,6 @@ impl AssetDownloadable {
 
 #[async_trait]
 impl Downloadable for AssetDownloadable {
-  fn get_http_client(&self) -> &Client {
-    &self.http_client
-  }
-
   fn url(&self) -> &String {
     &self.url
   }
@@ -122,7 +116,7 @@ impl Downloadable for AssetDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
+  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
     *self.attempts.lock()? += 1;
     if let Ok(mut status) = self.status.lock() {
       *status = AssetDownloadableStatus::Downloading;
@@ -171,7 +165,7 @@ impl Downloadable for AssetDownloadable {
     }
 
     if let (Some(compressed_url), Some(compressed_target)) = (&compressed_url, &compressed_target) {
-      let res = self.make_connection(&compressed_url).await?;
+      let res = client.get(compressed_url).send().await?.error_for_status()?;
       if let Some(content_len) = res.content_length() {
         self.monitor.set_total(content_len as usize);
       }
@@ -193,7 +187,7 @@ impl Downloadable for AssetDownloadable {
         )?;
       }
     } else {
-      let res = self.make_connection(&url).await?;
+      let res = client.get(url).send().await?.error_for_status()?;
       if let Some(content_len) = res.content_length() {
         self.monitor.set_total(content_len as usize);
       }

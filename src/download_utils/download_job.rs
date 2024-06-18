@@ -1,17 +1,19 @@
-use std::{ sync::{ Arc, Mutex, RwLock }, collections::VecDeque };
+use std::{ collections::VecDeque, sync::{ Arc, Mutex, RwLock }, time::Duration };
 
 use chrono::Utc;
 use futures::future::join_all;
 use log::{ info, error, warn };
+use reqwest::{ header::{ HeaderMap, HeaderValue }, Client };
 
 use crate::{ bootstrap::MinecraftLauncherError, progress_reporter::ProgressReporter };
 
-use super::downloadables::Downloadable;
+use super::{ downloadables::Downloadable, ProxyOptions };
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 
 pub struct DownloadJob {
   name: String,
+  client: Client,
   all_files: Arc<RwLock<Vec<DownloadableSync>>>,
   remaining_files: Arc<Mutex<VecDeque<DownloadableSync>>>,
   failures: Arc<Mutex<Vec<DownloadableSync>>>,
@@ -23,13 +25,69 @@ pub struct DownloadJob {
   downloadable_progress_reporter: Arc<ProgressReporter>,
 }
 
+impl Default for DownloadJob {
+  fn default() -> Self {
+    Self {
+      name: String::default(),
+
+      client: Self::create_http_client(None).unwrap_or_default(),
+      ignore_failures: false,
+      max_pool_size: 16,
+      max_download_attempts: 5,
+
+      all_files: Arc::default(),
+      remaining_files: Arc::default(),
+      failures: Arc::default(),
+      progress_reporter: Arc::default(),
+      downloadable_progress_reporter: Arc::default(),
+    }
+  }
+}
+
 impl DownloadJob {
-  pub fn new(name: &str, ignore_failures: bool, max_pool_size: u16, max_download_attempts: u8, progress_reporter: &Arc<ProgressReporter>) -> Self {
-    let progress_reporter = Arc::clone(progress_reporter);
-    let all_files = Arc::new(RwLock::new(vec![]));
+  pub fn new(
+    name: &str /* , ignore_failures: bool, max_pool_size: u16, max_download_attempts: u8, progress_reporter: &Arc<ProgressReporter>*/
+  ) -> Self {
+    Self {
+      name: name.to_string(),
+      ..Self::default()
+      //all_files,
+      //remaining_files: Arc::new(Mutex::new(VecDeque::new())),
+      //failures: Arc::new(Mutex::new(vec![])),
+      //ignore_failures,
+      //max_pool_size,
+      //max_download_attempts,
+      //progress_reporter,
+      //downloadable_progress_reporter,
+    }
+  }
+
+  pub fn with_client(mut self, client: Client) -> Self {
+    self.client = client;
+    self
+  }
+
+  pub fn with_ignore_failures(mut self, ignore_failures: bool) -> Self {
+    self.ignore_failures = ignore_failures;
+    self
+  }
+
+  pub fn with_max_pool_size(mut self, max_pool_size: u16) -> Self {
+    self.max_pool_size = max_pool_size;
+    self
+  }
+
+  pub fn with_max_download_attempts(mut self, max_download_attempts: u8) -> Self {
+    self.max_download_attempts = max_download_attempts;
+    self
+  }
+
+  pub fn with_progress_reporter(mut self, progress_reporter: &Arc<ProgressReporter>) -> Self {
+    self.progress_reporter = Arc::clone(progress_reporter);
+
     let downloadable_progress_reporter = {
-      let progress_reporter = Arc::clone(&progress_reporter);
-      let all_files = Arc::clone(&all_files);
+      let progress_reporter = Arc::clone(progress_reporter);
+      let all_files = Arc::clone(&self.all_files);
       Arc::new(
         ProgressReporter::new(move |_update| {
           Self::update_progress(&all_files, &progress_reporter);
@@ -37,20 +95,9 @@ impl DownloadJob {
       )
     };
 
-    Self {
-      name: name.to_string(),
-      all_files,
-      remaining_files: Arc::new(Mutex::new(VecDeque::new())),
-      failures: Arc::new(Mutex::new(vec![])),
-      ignore_failures,
-      max_pool_size,
-      max_download_attempts,
-      progress_reporter,
-      downloadable_progress_reporter,
-    }
+    self.downloadable_progress_reporter = downloadable_progress_reporter;
+    self
   }
-
-  // const MAXIMUM_POOL_SIZE: usize = 16;
 
   pub async fn start(self) -> Result<(), Box<dyn std::error::Error>> {
     self.progress_reporter.clear();
@@ -59,6 +106,7 @@ impl DownloadJob {
     let mut futures = vec![];
     for _ in 0..self.max_pool_size {
       let job_name = self.name.clone();
+      let client = self.client.clone();
       let remaining_files = Arc::clone(&self.remaining_files);
       let failures = Arc::clone(&self.failures);
       futures.push(
@@ -87,7 +135,7 @@ impl DownloadJob {
               );
 
               let mut should_add_back = false;
-              if let Err(err) = downloadable.download().await {
+              if let Err(err) = downloadable.download(&client).await {
                 warn!("Couldn't download {} for job '{}': {}", downloadable.url(), job_name, err);
                 should_add_back = true;
               } else {
@@ -158,5 +206,21 @@ impl DownloadJob {
       let scaled_current = (((current_size as f64) / (total_size as f64)) * 100.0).ceil();
       progress_reporter.set(status, scaled_current as u32, 100);
     }
+  }
+}
+
+impl DownloadJob {
+  pub fn create_http_client(proxy_options: Option<ProxyOptions>) -> Result<Client, reqwest::Error> {
+    let mut client = Client::builder();
+    let mut headers = HeaderMap::new();
+    headers.append("Cache-Control", HeaderValue::from_static("no-store,max-age=0,no-cache"));
+    headers.append("Expires", HeaderValue::from_static("0"));
+    headers.append("Pragma", HeaderValue::from_static("no-cache"));
+
+    client = client.default_headers(headers).connect_timeout(Duration::from_secs(30)).timeout(Duration::from_secs(15));
+    if let Some(proxy) = proxy_options.unwrap_or_default().create_http_proxy() {
+      client = client.proxy(proxy);
+    }
+    client.build()
   }
 }

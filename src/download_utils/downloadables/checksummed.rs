@@ -8,10 +8,10 @@ use crate::{ download_utils::DownloadableMonitor, json::Sha1Sum };
 
 use super::Downloadable;
 
+/// Both the file and the checksum are on the remote server
 pub struct ChecksummedDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub http_client: Client,
   pub force_download: bool,
   pub attempts: Arc<Mutex<usize>>,
   pub start_time: Arc<Mutex<Option<u64>>>,
@@ -21,11 +21,10 @@ pub struct ChecksummedDownloadable {
 }
 
 impl ChecksummedDownloadable {
-  pub fn new(http_client: Client, url: &str, target_file: &PathBuf, force_download: bool) -> Self {
+  pub fn new(url: &str, target_file: &PathBuf, force_download: bool) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
-      http_client,
       force_download,
       attempts: Arc::new(Mutex::new(0)),
       start_time: Arc::new(Mutex::new(None)),
@@ -37,18 +36,15 @@ impl ChecksummedDownloadable {
 
   const NULL_SHA1: [u8; 20] = [0; 20];
 
-  async fn get_remote_hash(&self) -> Result<Sha1Sum, Box<dyn std::error::Error>> {
-    let res = self.make_connection(&format!("{}.sha1", self.url)).await?;
-    Ok(Sha1Sum::try_from(res.text().await?)?)
+  async fn get_remote_hash(&self, client: &Client) -> Result<Sha1Sum, Box<dyn std::error::Error>> {
+    let sha_url = format!("{}.sha1", self.url);
+    let sum_hex = client.get(sha_url).send().await?.error_for_status()?.text().await?;
+    Ok(Sha1Sum::try_from(sum_hex)?)
   }
 }
 
 #[async_trait]
 impl Downloadable for ChecksummedDownloadable {
-  fn get_http_client(&self) -> &Client {
-    &self.http_client
-  }
-
   fn url(&self) -> &String {
     &self.url
   }
@@ -90,7 +86,7 @@ impl Downloadable for ChecksummedDownloadable {
     *self.end_time.lock().unwrap() = Some(end_time);
   }
 
-  async fn download(&self) -> Result<(), Box<dyn std::error::Error + 'life0>> {
+  async fn download(&self, client: &Client) -> Result<(), Box<dyn std::error::Error + 'life0>> {
     *self.attempts.lock()? += 1;
 
     let mut local_hash = None;
@@ -105,7 +101,7 @@ impl Downloadable for ChecksummedDownloadable {
     }
 
     if expected_hash.is_none() {
-      expected_hash = Some(self.get_remote_hash().await.unwrap_or(Sha1Sum::new(Self::NULL_SHA1)));
+      expected_hash = Some(self.get_remote_hash(&client).await.unwrap_or(Sha1Sum::new(Self::NULL_SHA1)));
     }
 
     if expected_hash.as_ref().unwrap() == &Sha1Sum::new(Self::NULL_SHA1) && target_file.is_file() {
@@ -115,7 +111,7 @@ impl Downloadable for ChecksummedDownloadable {
       info!("Remote checksum matches local file");
       return Ok(());
     } else {
-      let res = self.make_connection(&self.url).await?;
+      let res = client.get(&self.url).send().await?.error_for_status()?;
       if let Some(content_len) = res.content_length() {
         self.monitor.set_total(content_len as usize);
       }
