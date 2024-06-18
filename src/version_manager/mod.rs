@@ -12,13 +12,14 @@ use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
 
 use crate::{
-  download_utils::downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
+  download_utils::{ download_job::DownloadJob, downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable } },
   json::{
-    manifest::{ assets::AssetIndex, download::DownloadType, rule::OperatingSystem, VersionManifest },
+    manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,
     MCVersion,
     VersionInfo,
   },
+  progress_reporter::ProgressReporter,
 };
 
 pub mod remote;
@@ -169,13 +170,7 @@ impl VersionManager {
   }
 }
 
-// Assets and Libraries
 impl VersionManager {
-  fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
-    let required_files = local.get_required_files(os, &self.env_features);
-    required_files.iter().all(|file| self.game_dir.join(file).is_file())
-  }
-
   pub async fn is_up_to_date(&self, version_manifest: &VersionManifest) -> bool {
     if let Some(remote_version) = self.get_remote_version(version_manifest.get_id()) {
       if remote_version.get_updated_time().inner() > version_manifest.get_updated_time().inner() {
@@ -194,6 +189,53 @@ impl VersionManager {
     }
   }
 
+  pub async fn download_required_files(
+    &self,
+    version_manifest: &VersionManifest,
+    max_concurrent_downloads: u16,
+    max_download_attempts: u8,
+    progress_reporter: &Arc<ProgressReporter>
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut job1 = DownloadJob::new("Version & Libraries")
+      .with_ignore_failures(false)
+      .with_max_pool_size(max_concurrent_downloads)
+      .with_max_download_attempts(max_download_attempts)
+      .with_progress_reporter(progress_reporter);
+    job1.add_downloadables(self.get_version_downloadables(version_manifest));
+
+    let mut job2 = DownloadJob::new("Resources")
+      .with_ignore_failures(false)
+      .with_max_pool_size(max_concurrent_downloads)
+      .with_max_download_attempts(max_download_attempts)
+      .with_progress_reporter(progress_reporter);
+    job2.add_downloadables(self.get_resource_files(&self.game_dir, version_manifest).await?);
+
+    // Download one at a time
+    job1.start().await?;
+    job2.start().await?;
+    Ok(())
+  }
+}
+
+// Assets and Libraries
+impl VersionManager {
+  fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
+    let required_files = local.get_required_files(os, &self.env_features);
+    required_files.iter().all(|file| self.game_dir.join(file).is_file())
+  }
+
+  pub fn get_jar_downloadable(game_dir: &Path, local_version: &VersionManifest) -> Box<dyn Downloadable + Send + Sync> {
+    let version_id = local_version.get_id().to_string();
+    let jar_path = game_dir.join("versions").join(&version_id).join(format!("{}.jar", &version_id));
+
+    if let Some(DownloadInfo { sha1, url, .. }) = local_version.get_download_url(DownloadType::Client) {
+      Box::new(PreHashedDownloadable::new(url, &jar_path, false, sha1.clone()))
+    } else {
+      let url = format!("https://s3.amazonaws.com/Minecraft.Download/versions/{}/{}.jar", &version_id, &version_id);
+      Box::new(EtagDownloadable::new(&url, &jar_path, false))
+    }
+  }
+
   pub fn get_version_downloadables(&self, local_version: &VersionManifest) -> Vec<Box<dyn Downloadable + Send + Sync>> {
     let mut downloadables = local_version.get_required_downloadables(
       &OperatingSystem::get_current_platform(),
@@ -202,20 +244,8 @@ impl VersionManager {
       &self.env_features
     );
 
-    let jar_id = local_version.get_jar().to_string();
-    let jar_path = format!("versions/{}/{}.jar", &jar_id, &jar_id);
-    let jar_file_path = &self.game_dir.join(jar_path.replace('/', MAIN_SEPARATOR_STR));
-
-    let info = local_version.get_download_url(DownloadType::Client);
-
-    let downloadable: Box<dyn Downloadable + Send + Sync> = if let Some(info) = info {
-      Box::new(PreHashedDownloadable::new(&info.url, jar_file_path, false, info.sha1.clone()))
-    } else {
-      let url = format!("https://s3.amazonaws.com/Minecraft.Download/{jar_path}");
-      Box::new(EtagDownloadable::new(&url, jar_file_path, false))
-    };
-    downloadables.push(downloadable);
-
+    let jar_downloadable = Self::get_jar_downloadable(&self.game_dir, local_version);
+    downloadables.push(jar_downloadable);
     downloadables
   }
 

@@ -19,7 +19,7 @@ use thiserror::Error;
 use zip::ZipArchive;
 
 use crate::{
-  download_utils::{ download_job::DownloadJob, ProxyOptions },
+  download_utils::ProxyOptions,
   json::{
     manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, VersionManifest },
     Sha1Sum,
@@ -132,32 +132,15 @@ impl GameBootstrap {
 
     self.progress_reporter().clear();
     // TODO: self.migrate_old_assets()
-    self.download_required_files(&local_version).await?;
+    version_manager.download_required_files(
+      &local_version,
+      self.options.max_concurrent_downloads,
+      self.options.max_download_attempts,
+      self.progress_reporter()
+    ).await?;
 
     self.local_version = Some(local_version);
     self.launch_game().await
-  }
-
-  async fn download_required_files(&self, local_version: &VersionManifest) -> Result<(), Box<dyn std::error::Error>> {
-    let version_manager = self.version_manager.as_ref().unwrap();
-
-    let mut job1 = DownloadJob::new("Version & Libraries")
-      .with_ignore_failures(false)
-      .with_max_pool_size(self.options.max_concurrent_downloads)
-      .with_max_download_attempts(self.options.max_download_attempts)
-      .with_progress_reporter(self.progress_reporter());
-    job1.add_downloadables(version_manager.get_version_downloadables(local_version));
-
-    let mut job2 = DownloadJob::new("Resources")
-      .with_ignore_failures(false)
-      .with_max_pool_size(self.options.max_concurrent_downloads)
-      .with_max_download_attempts(self.options.max_download_attempts)
-      .with_progress_reporter(self.progress_reporter());
-    job2.add_downloadables(version_manager.get_resource_files(&self.options.game_dir, local_version).await.unwrap());
-
-    job1.start().await?;
-    job2.start().await?;
-    Ok(())
   }
 
   async fn launch_game(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
