@@ -20,6 +20,10 @@ impl Sha1Sum {
     sha1_hasher.update(&buf);
     Ok(Sha1Sum(sha1_hasher.finalize().into()))
   }
+
+  pub fn null() -> Self {
+    Self([0u8; 20])
+  }
 }
 
 impl TryFrom<String> for Sha1Sum {

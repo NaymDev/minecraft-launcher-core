@@ -34,8 +34,6 @@ impl ChecksummedDownloadable {
     }
   }
 
-  const NULL_SHA1: [u8; 20] = [0; 20];
-
   async fn get_remote_hash(&self, client: &Client) -> Result<Sha1Sum, Box<dyn std::error::Error>> {
     let sha_url = format!("{}.sha1", self.url);
     let sum_hex = client.get(sha_url).send().await?.error_for_status()?.text().await?;
@@ -103,10 +101,10 @@ impl Downloadable for ChecksummedDownloadable {
     }
 
     if expected_hash.is_none() {
-      expected_hash = Some(self.get_remote_hash(&client).await.unwrap_or(Sha1Sum::new(Self::NULL_SHA1)));
+      expected_hash = Some(self.get_remote_hash(&client).await.unwrap_or(Sha1Sum::null()));
     }
 
-    if expected_hash.as_ref().unwrap() == &Sha1Sum::new(Self::NULL_SHA1) && target_file.is_file() {
+    if expected_hash.as_ref().unwrap() == &Sha1Sum::null() && target_file.is_file() {
       info!("Couldn't find a checksum so assuming our copy is good");
       return Ok(());
     } else if expected_hash == local_hash {
@@ -120,7 +118,7 @@ impl Downloadable for ChecksummedDownloadable {
       let bytes = res.bytes().await?;
       local_hash = Some(Sha1Sum::from_reader(&mut Cursor::new(&bytes))?);
       fs::write(&target_file, &bytes)?;
-      if expected_hash.as_ref().unwrap() == &Sha1Sum::new(Self::NULL_SHA1) {
+      if expected_hash.as_ref().unwrap() == &Sha1Sum::null() {
         info!("Didn't have checksum so assuming the downloaded file is good");
         return Ok(());
       } else if expected_hash == local_hash {
