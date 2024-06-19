@@ -48,7 +48,7 @@ impl AssetDownloadable {
       asset: asset.clone(),
       url_base: url_base.to_string(),
       destination: objects_dir.to_path_buf(),
-      monitor: Arc::new(DownloadableMonitor::new(0, 5242880)),
+      monitor: Arc::new(DownloadableMonitor::new(0, asset.size)),
     }
   }
 
@@ -146,7 +146,7 @@ impl Downloadable for AssetDownloadable {
     }
 
     if target.is_file() {
-      let file_len = target.metadata()?.len();
+      let file_len = target.metadata()?.len() as usize;
       if file_len == self.asset.size {
         info!("Have local file and it's the same size; assuming it's okay!");
         return Ok(());

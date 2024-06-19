@@ -41,7 +41,7 @@ impl AssetIndex {
 #[serde(rename_all = "camelCase")]
 pub struct AssetObject {
   pub hash: Sha1Sum,
-  pub size: u64,
+  pub size: usize,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reconstruct: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]

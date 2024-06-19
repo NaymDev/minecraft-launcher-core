@@ -1,15 +1,10 @@
-use std::{
-  collections::HashSet,
-  fs::{ self, create_dir_all, read_dir, File },
-  io::Cursor,
-  path::{ Path, PathBuf, MAIN_SEPARATOR_STR },
-  sync::{ Arc, Mutex },
-};
+use std::{ collections::HashSet, fs::{ self, create_dir_all, read_dir, File }, io::{ self, Cursor }, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use error::{ InstallVersionError, LoadVersionError };
 use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
 use reqwest::Client;
+use sha1::{ Digest, Sha1 };
 
 use crate::{
   download_utils::{ download_job::DownloadJob, downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable } },
@@ -17,6 +12,7 @@ use crate::{
     manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,
     MCVersion,
+    Sha1Sum,
     VersionInfo,
   },
   progress_reporter::ProgressReporter,
@@ -112,18 +108,13 @@ impl VersionManager {
           info!("Scanning local version versions/{}", &version_id);
           let version_id = MCVersion::from(version_id);
           match self.load_manifest(&version_id) {
-            Ok(_) => {
-              versions.push(version_id);
-            }
+            Ok(_) => versions.push(version_id),
             Err(LoadVersionError::ManifestNotFound) => {
-              let version_id = version_id.to_string();
               warn!("Version file not found! Skipping. (versions/{}/{}.json)", &version_id, &version_id);
             }
-            Err(LoadVersionError::ManifestParseError(e)) => {
-              let version_id = version_id.to_string();
-              warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, e);
+            Err(err) => {
+              warn!("Failed to parse version file! Skipping. (versions/{}/{}.json): {}", &version_id, &version_id, err);
             }
-            Err(err) => warn!("Failed to load version: {}", err),
           }
         }
         local_cache.lock().unwrap().extend(versions);
@@ -208,7 +199,7 @@ impl VersionManager {
       .with_max_pool_size(max_concurrent_downloads)
       .with_max_download_attempts(max_download_attempts)
       .with_progress_reporter(progress_reporter);
-    job2.add_downloadables(self.get_resource_files(&self.game_dir, version_manifest).await?);
+    job2.add_downloadables(self.get_resource_downloadables(&self.game_dir, version_manifest).await?);
 
     // Download one at a time
     job1.start().await?;
@@ -249,7 +240,7 @@ impl VersionManager {
     downloadables
   }
 
-  pub async fn get_resource_files(
+  pub async fn get_resource_downloadables(
     &self,
     game_dir: &Path,
     local_version: &VersionManifest
@@ -258,25 +249,40 @@ impl VersionManager {
     let objects_dir = assets_dir.join("objects");
     let indexes_dir = assets_dir.join("indexes");
 
-    let mut vec: Vec<Box<dyn Downloadable + Send + Sync>> = vec![];
-
-    let index_info = local_version.asset_index.as_ref().unwrap();
+    let index_info = local_version.asset_index.as_ref().ok_or("Asset index not found in version manifest!")?;
     let index_file = indexes_dir.join(format!("{}.json", index_info.id));
 
-    let url = &index_info.url;
-    let bytes = Client::new().get(url).send().await?.bytes().await?;
-    create_dir_all(indexes_dir)?;
-    fs::write(&index_file, &bytes)?;
-    let asset_index: AssetIndex = serde_json::from_reader(&mut Cursor::new(&bytes))?;
-    let objects = asset_index.get_unique_objects();
-    for (obj, value) in objects {
-      // let hash = obj.hash.to_string();
-      let downloadable = Box::new(AssetDownloadable::new(value, obj, "https://resources.download.minecraft.net/", &objects_dir));
-      downloadable.monitor.set_total(obj.size as usize);
-      vec.push(downloadable);
+    if let Ok(mut file) = File::open(&index_file) {
+      // Obtain the SHA-1 hash of the already downloaded index file
+      let mut sha1 = Sha1::new();
+      io::copy(&mut file, &mut sha1)?;
+      let sha1 = Sha1Sum::new(sha1.finalize().into());
+
+      // If the hash is incorrect, redownload
+      if sha1 != index_info.sha1 {
+        warn!("Asset index file is invalid, redownloading");
+        fs::remove_file(&index_file)?;
+      }
     }
 
-    Ok(vec)
+    // Parse the asset index file
+    let asset_index: AssetIndex = if let Ok(file) = File::open(&index_file) {
+      serde_json::from_reader(file)?
+    } else {
+      // Download asset index file and parse it
+      let bytes = Client::new().get(&index_info.url).send().await?.bytes().await?;
+      create_dir_all(indexes_dir)?;
+      fs::write(&index_file, &bytes)?;
+      serde_json::from_reader(&mut Cursor::new(&bytes))?
+    };
+
+    // Turn each resource object into a downloadable
+    let mut downloadables: Vec<Box<dyn Downloadable + Send + Sync>> = vec![];
+    for (asset_object, asset_name) in asset_index.get_unique_objects() {
+      downloadables.push(Box::new(AssetDownloadable::new(asset_name, asset_object, "https://resources.download.minecraft.net/", &objects_dir)));
+    }
+
+    Ok(downloadables)
   }
 }
 
