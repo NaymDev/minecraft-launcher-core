@@ -187,19 +187,19 @@ impl VersionManager {
     max_download_attempts: u8,
     progress_reporter: &Arc<ProgressReporter>
   ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut job1 = DownloadJob::new("Version & Libraries")
-      .with_ignore_failures(false)
-      .with_max_pool_size(max_concurrent_downloads)
-      .with_max_download_attempts(max_download_attempts)
-      .with_progress_reporter(progress_reporter);
-    job1.add_downloadables(self.get_version_downloadables(version_manifest));
+    let job1 = DownloadJob::new("Version & Libraries")
+      .ignore_failures(false)
+      .concurrent_downloads(max_concurrent_downloads)
+      .max_download_attempts(max_download_attempts)
+      .with_progress_reporter(progress_reporter)
+      .add_downloadables(self.get_version_downloadables(version_manifest));
 
-    let mut job2 = DownloadJob::new("Resources")
-      .with_ignore_failures(false)
-      .with_max_pool_size(max_concurrent_downloads)
-      .with_max_download_attempts(max_download_attempts)
-      .with_progress_reporter(progress_reporter);
-    job2.add_downloadables(self.get_resource_downloadables(&self.game_dir, version_manifest).await?);
+    let job2 = DownloadJob::new("Resources")
+      .ignore_failures(false)
+      .concurrent_downloads(max_concurrent_downloads)
+      .max_download_attempts(max_download_attempts)
+      .with_progress_reporter(progress_reporter)
+      .add_downloadables(self.get_resource_downloadables(&self.game_dir, version_manifest).await?);
 
     // Download one at a time
     job1.start().await?;

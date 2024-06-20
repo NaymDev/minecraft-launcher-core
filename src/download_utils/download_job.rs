@@ -18,7 +18,7 @@ pub struct DownloadJob {
   remaining_files: Arc<Mutex<VecDeque<DownloadableSync>>>,
   failures: Arc<Mutex<Vec<DownloadableSync>>>,
   ignore_failures: bool,
-  max_pool_size: u16,
+  concurrent_downloads: u16,
   max_download_attempts: u8,
 
   progress_reporter: Arc<ProgressReporter>,
@@ -32,7 +32,7 @@ impl Default for DownloadJob {
 
       client: Self::create_http_client(None).unwrap_or_default(),
       ignore_failures: false,
-      max_pool_size: 16,
+      concurrent_downloads: 16,
       max_download_attempts: 5,
 
       all_files: Arc::default(),
@@ -57,17 +57,17 @@ impl DownloadJob {
     self
   }
 
-  pub fn with_ignore_failures(mut self, ignore_failures: bool) -> Self {
+  pub fn ignore_failures(mut self, ignore_failures: bool) -> Self {
     self.ignore_failures = ignore_failures;
     self
   }
 
-  pub fn with_max_pool_size(mut self, max_pool_size: u16) -> Self {
-    self.max_pool_size = max_pool_size;
+  pub fn concurrent_downloads(mut self, concurrent_downloads: u16) -> Self {
+    self.concurrent_downloads = concurrent_downloads;
     self
   }
 
-  pub fn with_max_download_attempts(mut self, max_download_attempts: u8) -> Self {
+  pub fn max_download_attempts(mut self, max_download_attempts: u8) -> Self {
     self.max_download_attempts = max_download_attempts;
     self
   }
@@ -89,11 +89,27 @@ impl DownloadJob {
     self
   }
 
+  pub fn add_downloadables(self, downloadables: Vec<Box<dyn Downloadable + Send + Sync>>) -> Self {
+    let mut all_files = self.all_files.write().unwrap();
+    let mut remaining_files = self.remaining_files.lock().unwrap();
+    for downloadable in downloadables {
+      downloadable.get_monitor().set_reporter(self.downloadable_progress_reporter.clone());
+      let downloadable_arc = Arc::from(downloadable);
+      remaining_files.push_back(Arc::clone(&downloadable_arc));
+      all_files.push(downloadable_arc);
+    }
+    drop(all_files);
+    drop(remaining_files);
+    self
+  }
+}
+
+impl DownloadJob {
   pub async fn start(self) -> Result<(), Error> {
     self.progress_reporter.clear();
 
     let start_time = Utc::now();
-    let futures = (0..self.max_pool_size)
+    let futures = (0..self.concurrent_downloads)
       .map(|_| {
         let job_name = self.name.clone();
         let client = self.client.clone();
@@ -155,17 +171,6 @@ impl DownloadJob {
 
     self.progress_reporter.clear();
     Ok(())
-  }
-
-  pub fn add_downloadables(&mut self, downloadables: Vec<Box<dyn Downloadable + Send + Sync>>) {
-    let mut all_files = self.all_files.write().unwrap();
-    let mut remaining_files = self.remaining_files.lock().unwrap();
-    for downloadable in downloadables {
-      downloadable.get_monitor().set_reporter(self.downloadable_progress_reporter.clone());
-      let downloadable_arc = Arc::from(downloadable);
-      remaining_files.push_back(Arc::clone(&downloadable_arc));
-      all_files.push(downloadable_arc);
-    }
   }
 
   fn update_progress(all_files: &RwLock<Vec<DownloadableSync>>, progress_reporter: &ProgressReporter) {
