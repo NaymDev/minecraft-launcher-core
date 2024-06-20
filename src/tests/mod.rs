@@ -137,6 +137,13 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .progress_reporter(reporter)
     .build()?;
   let mut game_runner = GameBootstrap::new(game_options);
-  game_runner.launch().await.unwrap();
+  let mut process = game_runner.launch().await?;
+  let status = loop {
+    if let Some(status) = process.exit_status() {
+      break status;
+    }
+  };
+  info!("Game exited with status: {status}");
+
   Ok(())
 }
