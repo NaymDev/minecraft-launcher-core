@@ -1,7 +1,7 @@
-use std::{ collections::VecDeque, sync::{ Arc, Mutex, RwLock }, time::Duration };
+use std::{ sync::{ Arc, RwLock }, time::Duration };
 
 use chrono::Utc;
-use futures::future::join_all;
+use futures::{ stream::iter, StreamExt };
 use log::{ info, error, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client };
 
@@ -102,75 +102,57 @@ impl DownloadJob {
 impl DownloadJob {
   pub async fn start(self) -> Result<(), Error> {
     self.progress_reporter.clear();
-    let remaining_files = {
-      let vec: VecDeque<DownloadableSync> = self.all_files.read().unwrap().clone().into();
-      Arc::new(Mutex::new(vec))
-    };
-    let failures = Arc::new(Mutex::new(Vec::new()));
 
     let start_time = Utc::now();
-    let futures = (0..self.concurrent_downloads)
-      .map(|_| {
-        let job_name = self.name.clone();
-        let client = self.client.clone();
-        let remaining_files = Arc::clone(&remaining_files);
-        let failures = Arc::clone(&failures);
-        tokio::spawn(async move {
-          fn pop_downloadable(remaining_files: &Arc<Mutex<VecDeque<DownloadableSync>>>) -> Option<DownloadableSync> {
-            let mut remaining_files = remaining_files.lock().unwrap();
-            remaining_files.pop_front()
-          }
-
-          while let Some(downloadable) = pop_downloadable(&remaining_files) {
-            if downloadable.get_start_time().is_none() {
-              downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
-            }
-
-            if downloadable.get_attempts() > (self.max_download_attempts as usize) {
-              error!("Gave up trying to download {} for job '{}'", downloadable.url(), job_name);
-              if !self.ignore_failures {
-                failures.lock().unwrap().push(downloadable);
-              }
-            } else {
-              info!(
-                "Attempting to download {} for job '{}'... (try {})",
-                downloadable.get_target_file().display(),
-                job_name,
-                downloadable.get_attempts()
-              );
-
-              let mut should_add_back = false;
-              if let Err(err) = downloadable.download(&client).await {
-                warn!("Couldn't download {} for job '{}': {}", downloadable.url(), job_name, err);
-                should_add_back = true;
-              } else {
-                info!("Finished downloading {} for job '{}'", downloadable.get_target_file().display(), job_name);
-                downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
-              }
-
-              let monitor = downloadable.get_monitor();
-              monitor.set_current(monitor.get_total());
-
-              if should_add_back {
-                remaining_files.lock().unwrap().push_back(downloadable);
-              }
-            }
-          }
-        })
-      })
-      .collect::<Vec<_>>();
-    join_all(futures).await;
+    let downloadables = self.all_files.read().unwrap().to_vec();
+    let results = iter(downloadables)
+      .map(|downloadable| self.try_download(downloadable))
+      .buffered(self.concurrent_downloads as usize)
+      .collect::<Vec<_>>().await;
 
     let total_time = Utc::now().signed_duration_since(start_time).num_seconds();
-    let failures = failures.lock().unwrap();
-    if !failures.is_empty() {
-      return Err(Error::JobFailed { name: self.name, failures: failures.len(), total_time });
-    } else {
-      info!("Job '{}' finished successfully (took {}s)", self.name, total_time);
-    }
+    let failures = results
+      .iter()
+      .flat_map(|r| r.as_ref().err())
+      .collect::<Vec<_>>();
 
     self.progress_reporter.clear();
-    Ok(())
+
+    if self.ignore_failures || failures.is_empty() {
+      info!("Job '{}' finished successfully (took {}s)", self.name, total_time);
+      return Ok(());
+    }
+    Err(Error::JobFailed { name: self.name, failures: failures.len(), total_time })
+  }
+
+  async fn try_download(&self, downloadable: DownloadableSync) -> Result<DownloadableSync, Error> {
+    if downloadable.get_start_time().is_none() {
+      downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
+    }
+
+    let mut download_result = Ok(&downloadable);
+    let target_file = downloadable.get_target_file();
+    while downloadable.get_attempts() <= (self.max_download_attempts as usize) {
+      info!("Attempting to download {} for job '{}'... (try {})", target_file.display(), self.name, downloadable.get_attempts());
+      download_result = downloadable.download(&self.client).await.map(|_| &downloadable);
+
+      let monitor = downloadable.get_monitor();
+      monitor.set_current(monitor.get_total());
+
+      if let Err(err) = &download_result {
+        warn!("Couldn't download {} for job '{}': {}", downloadable.url(), self.name, err);
+      } else {
+        info!("Finished downloading {} for job '{}'", target_file.display(), self.name);
+        downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
+        break;
+      }
+    }
+
+    if download_result.is_err() {
+      error!("Gave up trying to download {} for job '{}'", downloadable.url(), self.name);
+    }
+
+    download_result.cloned()
   }
 
   fn update_progress(all_files: &RwLock<Vec<DownloadableSync>>, progress_reporter: &ProgressReporter) {
