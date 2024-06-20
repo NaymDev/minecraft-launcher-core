@@ -15,13 +15,13 @@ pub struct DownloadJob {
   name: String,
   client: Client,
   all_files: Arc<RwLock<Vec<DownloadableSync>>>,
-  remaining_files: Arc<Mutex<VecDeque<DownloadableSync>>>,
-  failures: Arc<Mutex<Vec<DownloadableSync>>>,
   ignore_failures: bool,
   concurrent_downloads: u16,
   max_download_attempts: u8,
 
+  // Tracks progress of the entire download job
   progress_reporter: Arc<ProgressReporter>,
+  // Passed to each downloadable, to track progress of the entire download job
   downloadable_progress_reporter: Arc<ProgressReporter>,
 }
 
@@ -36,8 +36,6 @@ impl Default for DownloadJob {
       max_download_attempts: 5,
 
       all_files: Arc::default(),
-      remaining_files: Arc::default(),
-      failures: Arc::default(),
       progress_reporter: Arc::default(),
       downloadable_progress_reporter: Arc::default(),
     }
@@ -91,15 +89,12 @@ impl DownloadJob {
 
   pub fn add_downloadables(self, downloadables: Vec<Box<dyn Downloadable + Send + Sync>>) -> Self {
     let mut all_files = self.all_files.write().unwrap();
-    let mut remaining_files = self.remaining_files.lock().unwrap();
     for downloadable in downloadables {
       downloadable.get_monitor().set_reporter(self.downloadable_progress_reporter.clone());
       let downloadable_arc = Arc::from(downloadable);
-      remaining_files.push_back(Arc::clone(&downloadable_arc));
       all_files.push(downloadable_arc);
     }
     drop(all_files);
-    drop(remaining_files);
     self
   }
 }
@@ -107,14 +102,19 @@ impl DownloadJob {
 impl DownloadJob {
   pub async fn start(self) -> Result<(), Error> {
     self.progress_reporter.clear();
+    let remaining_files = {
+      let vec: VecDeque<DownloadableSync> = self.all_files.read().unwrap().clone().into();
+      Arc::new(Mutex::new(vec))
+    };
+    let failures = Arc::new(Mutex::new(Vec::new()));
 
     let start_time = Utc::now();
     let futures = (0..self.concurrent_downloads)
       .map(|_| {
         let job_name = self.name.clone();
         let client = self.client.clone();
-        let remaining_files = Arc::clone(&self.remaining_files);
-        let failures = Arc::clone(&self.failures);
+        let remaining_files = Arc::clone(&remaining_files);
+        let failures = Arc::clone(&failures);
         tokio::spawn(async move {
           fn pop_downloadable(remaining_files: &Arc<Mutex<VecDeque<DownloadableSync>>>) -> Option<DownloadableSync> {
             let mut remaining_files = remaining_files.lock().unwrap();
@@ -162,7 +162,7 @@ impl DownloadJob {
     join_all(futures).await;
 
     let total_time = Utc::now().signed_duration_since(start_time).num_seconds();
-    let failures = self.failures.lock().unwrap();
+    let failures = failures.lock().unwrap();
     if !failures.is_empty() {
       return Err(Error::JobFailed { name: self.name, failures: failures.len(), total_time });
     } else {
