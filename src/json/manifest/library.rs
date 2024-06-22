@@ -1,9 +1,8 @@
 use std::{ collections::HashMap, path::Path };
 
-use reqwest::Url;
 use serde::{ Deserialize, Serialize };
 
-use crate::{ download_utils::downloadables::{ ChecksummedDownloadable, Downloadable, PreHashedDownloadable }, json::EnvironmentFeatures };
+use crate::json::EnvironmentFeatures;
 
 use super::{ artifact::Artifact, rule::{ OperatingSystem, Rule, RuleAction }, DownloadInfo };
 
@@ -64,38 +63,6 @@ impl Library {
 
     if let Some(downloads) = &self.downloads {
       downloads.get_download_info(classifier)
-    } else {
-      None
-    }
-  }
-
-  pub fn create_download(&self, game_dir: &Path, os: &OperatingSystem, force_download: bool) -> Option<Box<dyn Downloadable + Send + Sync>> {
-    // If the lib has a natives field, but the os is not supported, return None immediately
-    let classifier = self.get_artifact_classifier(os)?;
-
-    let libraries_dir = game_dir.join("libraries");
-    let file_path = self.name.get_local_path(&libraries_dir);
-    let artifact_path = self.get_artifact_path(classifier);
-
-    // If the lib has a single url
-    if let Some(url) = &self.url {
-      let mut url = Url::parse(url).ok()?;
-      url.set_path(&artifact_path);
-      let downloadable = ChecksummedDownloadable::new(url.as_str(), &file_path, force_download);
-      return Some(Box::new(downloadable));
-    }
-
-    // If the lib has no url, try the default download server
-    if self.downloads.is_none() {
-      let url = format!("https://libraries.minecraft.net/{}", &artifact_path);
-      return Some(Box::new(ChecksummedDownloadable::new(&url, &file_path, force_download)));
-    }
-
-    // If the lib has multiple urls (like for each OS)
-    // We obtain the download info for the OS
-    if let Some(DownloadInfo { url, sha1, .. }) = self.get_download_info(os) {
-      let downloadable = PreHashedDownloadable::new(&url, &file_path, false, sha1);
-      Some(Box::new(downloadable))
     } else {
       None
     }

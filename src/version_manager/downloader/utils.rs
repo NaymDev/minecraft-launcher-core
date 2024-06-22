@@ -1,13 +1,13 @@
 use std::{ boxed::Box, fs::{ self, create_dir_all, File }, io::{ self, Cursor }, path::Path, vec::Vec };
 
 use log::warn;
-use reqwest::Client;
+use reqwest::{ Client, Url };
 use sha1::{ Digest, Sha1 };
 
 use crate::{
-  download_utils::downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
+  download_utils::downloadables::{ AssetDownloadable, ChecksummedDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
   json::{
-    manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, rule::OperatingSystem, VersionManifest },
+    manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, library::Library, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,
     Sha1Sum,
     VersionInfo,
@@ -36,7 +36,7 @@ pub fn get_library_downloadables(
   local_version
     .get_relevant_libraries(env_features)
     .into_iter()
-    .flat_map(|lib| lib.create_download(game_dir, &os, false))
+    .flat_map(|lib| create_lib_downloadable(lib, game_dir, &os, false))
     .collect()
 }
 
@@ -82,4 +82,41 @@ pub async fn get_asset_downloadables(
   }
 
   Ok(downloadables)
+}
+
+pub fn create_lib_downloadable(
+  lib: &Library,
+  game_dir: &Path,
+  os: &OperatingSystem,
+  force_download: bool
+) -> Option<Box<dyn Downloadable + Send + Sync>> {
+  // If the lib has a natives field, but the os is not supported, return None immediately
+  let classifier = lib.get_artifact_classifier(os)?;
+
+  let libraries_dir = game_dir.join("libraries");
+  let file_path = lib.name.get_local_path(&libraries_dir);
+  let artifact_path = lib.get_artifact_path(classifier);
+
+  // If the lib has a single url
+  if let Some(url) = &lib.url {
+    let mut url = Url::parse(url).ok()?;
+    url.set_path(&artifact_path);
+    let downloadable = ChecksummedDownloadable::new(url.as_str(), &file_path, force_download);
+    return Some(Box::new(downloadable));
+  }
+
+  // If the lib has no url, try the default download server
+  if lib.downloads.is_none() {
+    let url = format!("https://libraries.minecraft.net/{}", &artifact_path);
+    return Some(Box::new(ChecksummedDownloadable::new(&url, &file_path, force_download)));
+  }
+
+  // If the lib has multiple urls (like for each OS)
+  // We obtain the download info for the OS
+  if let Some(DownloadInfo { url, sha1, .. }) = lib.get_download_info(os) {
+    let downloadable = PreHashedDownloadable::new(&url, &file_path, false, sha1);
+    Some(Box::new(downloadable))
+  } else {
+    None
+  }
 }
