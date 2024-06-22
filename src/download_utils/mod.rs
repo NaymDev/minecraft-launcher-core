@@ -6,31 +6,6 @@ use crate::progress_reporter::ProgressReporter;
 pub mod downloadables;
 pub mod error;
 
-#[derive(Debug, Clone, Default)]
-pub enum ProxyOptions {
-  Proxy {
-    host: String,
-    port: u16,
-    username: Option<String>,
-    password: Option<String>,
-  },
-  #[default] NoProxy,
-}
-
-impl ProxyOptions {
-  pub fn create_http_proxy(&self) -> Option<reqwest::Proxy> {
-    if let ProxyOptions::Proxy { host, port, username, password } = self {
-      let mut proxy = reqwest::Proxy::all(format!("{}:{}", host, port)).ok()?;
-      if let (Some(username), Some(password)) = (username, password) {
-        proxy = proxy.basic_auth(username, password);
-      }
-      Some(proxy)
-    } else {
-      None
-    }
-  }
-}
-
 pub struct DownloadableMonitor {
   current: Mutex<usize>,
   total: Mutex<usize>,

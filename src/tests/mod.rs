@@ -1,6 +1,5 @@
 use crate::{
-  bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions }, GameBootstrap },
-  download_utils::ProxyOptions,
+  bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
   json::MCVersion,
   progress_reporter::{ ProgressReporter, ProgressUpdate },
 };

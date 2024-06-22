@@ -3,11 +3,7 @@ use std::{ path::PathBuf, collections::HashMap, fmt::Debug, sync::Arc };
 use derive_builder::Builder;
 use serde_json::Value;
 
-use crate::{
-  download_utils::ProxyOptions,
-  json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures, MCVersion },
-  progress_reporter::ProgressReporter,
-};
+use crate::{ json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures, MCVersion }, progress_reporter::ProgressReporter };
 
 use super::auth::UserAuthentication;
 
@@ -37,6 +33,31 @@ pub struct LauncherOptions {
 impl LauncherOptions {
   pub fn new(launcher_name: &str, launcher_version: &str) -> Self {
     Self { launcher_name: launcher_name.to_string(), launcher_version: launcher_version.to_string() }
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum ProxyOptions {
+  Proxy {
+    host: String,
+    port: u16,
+    username: Option<String>,
+    password: Option<String>,
+  },
+  #[default] NoProxy,
+}
+
+impl ProxyOptions {
+  pub fn create_http_proxy(&self) -> Option<reqwest::Proxy> {
+    if let ProxyOptions::Proxy { host, port, username, password } = self {
+      let mut proxy = reqwest::Proxy::all(format!("{}:{}", host, port)).ok()?;
+      if let (Some(username), Some(password)) = (username, password) {
+        proxy = proxy.basic_auth(username, password);
+      }
+      Some(proxy)
+    } else {
+      None
+    }
   }
 }
 

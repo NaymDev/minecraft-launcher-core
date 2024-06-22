@@ -10,7 +10,7 @@ use std::{
 use argument_substitutor::ArgumentSubstitutorBuilder;
 use chrono::{ Utc, Timelike };
 use log::{ info, error, debug, warn };
-use options::GameOptions;
+use options::{ GameOptions, ProxyOptions };
 use os_info::Type::Windows;
 use process::{ GameProcess, GameProcessBuilder };
 use regex::Regex;
@@ -19,7 +19,6 @@ use thiserror::Error;
 use zip::ZipArchive;
 
 use crate::{
-  download_utils::ProxyOptions,
   json::{
     manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, VersionManifest },
     Sha1Sum,

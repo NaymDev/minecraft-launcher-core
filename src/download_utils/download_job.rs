@@ -3,11 +3,11 @@ use std::{ sync::{ Arc, RwLock }, time::Duration };
 use chrono::Utc;
 use futures::{ stream::iter, StreamExt };
 use log::{ info, error, warn };
-use reqwest::{ header::{ HeaderMap, HeaderValue }, Client };
+use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy };
 
 use crate::progress_reporter::ProgressReporter;
 
-use super::{ downloadables::Downloadable, error::Error, ProxyOptions };
+use super::{ downloadables::Downloadable, error::Error };
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 
@@ -186,7 +186,7 @@ impl DownloadJob {
 }
 
 impl DownloadJob {
-  pub fn create_http_client(proxy_options: Option<ProxyOptions>) -> Result<Client, reqwest::Error> {
+  pub fn create_http_client(proxy: Option<Proxy>) -> Result<Client, reqwest::Error> {
     let mut client = Client::builder();
     let mut headers = HeaderMap::new();
     headers.append("Cache-Control", HeaderValue::from_static("no-store,max-age=0,no-cache"));
@@ -194,7 +194,7 @@ impl DownloadJob {
     headers.append("Pragma", HeaderValue::from_static("no-cache"));
 
     client = client.default_headers(headers).connect_timeout(Duration::from_secs(30)).timeout(Duration::from_secs(15));
-    if let Some(proxy) = proxy_options.unwrap_or_default().create_http_proxy() {
+    if let Some(proxy) = proxy {
       client = client.proxy(proxy);
     }
     client.build()
