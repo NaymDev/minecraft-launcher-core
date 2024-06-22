@@ -14,13 +14,13 @@ pub struct Library {
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub rules: Vec<Rule>,
   #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-  pub natives: HashMap<OperatingSystem, String>,
+  pub natives: HashMap<OperatingSystem, String>, // OS -> Artifact Classifier
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub extract: Option<ExtractRules>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub url: Option<String>,
+  pub url: Option<String>, // Single download URL
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub downloads: Option<LibraryDownloadInfo>,
+  pub downloads: Option<LibraryDownloadInfo>, // Multi download URL (common artifact, or classified artifacts)
 }
 
 impl Library {
@@ -47,27 +47,57 @@ impl Library {
     new_artifact.get_path_string()
   }
 
-  pub fn create_download(
-    &self,
-    artifact_path: &str,
-    target_file: &Path,
-    force_download: bool,
-    classifier: Option<&str>
-  ) -> Option<Box<dyn Downloadable + Send + Sync>> {
+  pub fn get_artifact_classifier(&self, os: &OperatingSystem) -> Option<Option<&str>> {
+    if self.natives.is_empty() {
+      return Some(None);
+    }
+
+    if let Some(classifier) = self.natives.get(os) {
+      return Some(Some(classifier));
+    }
+
+    None
+  }
+
+  pub fn get_download_info(&self, os: &OperatingSystem) -> Option<DownloadInfo> {
+    let classifier = self.get_artifact_classifier(os)?;
+
+    if let Some(downloads) = &self.downloads {
+      downloads.get_download_info(classifier)
+    } else {
+      None
+    }
+  }
+
+  pub fn create_download(&self, game_dir: &Path, os: &OperatingSystem, force_download: bool) -> Option<Box<dyn Downloadable + Send + Sync>> {
+    // If the lib has a natives field, but the os is not supported, return None immediately
+    let classifier = self.get_artifact_classifier(os)?;
+
+    let libraries_dir = game_dir.join("libraries");
+    let file_path = self.name.get_local_path(&libraries_dir);
+    let artifact_path = self.get_artifact_path(classifier);
+
+    // If the lib has a single url
     if let Some(url) = &self.url {
       let mut url = Url::parse(url).ok()?;
-      url.set_path(&self.get_artifact_path(classifier));
-      Some(Box::new(ChecksummedDownloadable::new(url.as_str(), target_file, force_download)))
-    } else if let Some(downloads) = &self.downloads {
-      if let Some(info) = downloads.get_download_info(classifier) {
-        Some(Box::new(PreHashedDownloadable::new(&info.url, target_file, force_download, info.sha1)))
-      } else {
-        None
-      }
+      url.set_path(&artifact_path);
+      let downloadable = ChecksummedDownloadable::new(url.as_str(), &file_path, force_download);
+      return Some(Box::new(downloadable));
+    }
+
+    // If the lib has no url, try the default download server
+    if self.downloads.is_none() {
+      let url = format!("https://libraries.minecraft.net/{}", &artifact_path);
+      return Some(Box::new(ChecksummedDownloadable::new(&url, &file_path, force_download)));
+    }
+
+    // If the lib has multiple urls (like for each OS)
+    // We obtain the download info for the OS
+    if let Some(DownloadInfo { url, sha1, .. }) = self.get_download_info(os) {
+      let downloadable = PreHashedDownloadable::new(&url, &file_path, false, sha1);
+      Some(Box::new(downloadable))
     } else {
-      let mut url = Url::parse("https://libraries.minecraft.net/").ok()?;
-      url.set_path(artifact_path);
-      Some(Box::new(ChecksummedDownloadable::new(url.as_str(), target_file, force_download)))
+      None
     }
   }
 }

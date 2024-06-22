@@ -77,30 +77,11 @@ impl VersionManifest {
     force_download: bool,
     env_features: &EnvironmentFeatures
   ) -> Vec<Box<dyn Downloadable + Send + Sync>> {
-    let mut vec = vec![];
-    for lib in self.get_relevant_libraries(env_features) {
-      let classifier = if !lib.natives.is_empty() {
-        if let Some(native) = lib.natives.get(os) {
-          Some(native.as_str())
-        } else {
-          continue;
-        }
-      } else {
-        None
-      };
-
-      let mut name = lib.name.clone();
-      if let Some(classifier) = classifier {
-        name.classifier = Some(classifier.to_string());
-      }
-
-      let file = name.get_local_path(&mc_dir.join("libraries"));
-      let downloadable = lib.create_download(&name.get_path_string(), &file, force_download, classifier);
-      if let Some(downloadable) = downloadable {
-        vec.push(downloadable);
-      }
-    }
-    vec
+    self
+      .get_relevant_libraries(env_features)
+      .into_iter()
+      .flat_map(|lib| lib.create_download(mc_dir, os, force_download))
+      .collect()
   }
 
   pub fn get_required_files(&self, os: &OperatingSystem, env_features: &EnvironmentFeatures) -> HashSet<String> {
