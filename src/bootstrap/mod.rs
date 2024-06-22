@@ -44,7 +44,6 @@ pub struct MinecraftLauncherError(pub String);
 
 pub struct GameBootstrap {
   pub options: GameOptions,
-  version_manager: Option<VersionManager>,
   local_version: Option<VersionManifest>,
 
   natives_dir: Option<PathBuf>,
@@ -58,7 +57,6 @@ impl GameBootstrap {
 
     Self {
       options,
-      version_manager: None,
 
       local_version: None,
       natives_dir: None,
@@ -108,8 +106,7 @@ impl GameBootstrap {
   pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
     // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
     self.progress_reporter().set("Fetching version manifest", 0, 2);
-    self.version_manager = Some(VersionManager::new(self.options.game_dir.clone(), self.options.env_features()).await?);
-    let version_manager = self.version_manager.as_ref().unwrap();
+    let mut version_manager = VersionManager::new(self.options.game_dir.clone(), self.options.env_features()).await?;
     // self.version_manager.refresh().await?;
     info!("Queuing library & version downloads");
 
@@ -139,10 +136,10 @@ impl GameBootstrap {
     ).await?;
 
     self.local_version = Some(local_version);
-    self.launch_game().await
+    self.launch_game(version_manager).await
   }
 
-  async fn launch_game(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
+  async fn launch_game(&mut self, mut version_manager: VersionManager) -> Result<GameProcess, Box<dyn std::error::Error>> {
     info!("Launching game");
 
     let natives_dir = self.get_version_dir().join(format!("{}-natives-{}", self.options.version, Utc::now().nanosecond()));
@@ -300,7 +297,7 @@ impl GameBootstrap {
 
     let process = game_process_builder.spawn();
 
-    self.perform_cleanups()?;
+    self.perform_cleanups(&mut version_manager)?;
 
     match process {
       Ok(process) => Ok(process),
@@ -308,17 +305,16 @@ impl GameBootstrap {
     }
   }
 
-  fn perform_cleanups(&self) -> Result<(), Box<dyn std::error::Error>> {
+  fn perform_cleanups(&self, version_manager: &mut VersionManager) -> Result<(), Box<dyn std::error::Error>> {
     // this.cleanupOrphanedVersions();
     // this.cleanupOrphanedAssets();
     // this.cleanupOldSkins();
-    self.cleanup_old_natives()?;
+    self.cleanup_old_natives(version_manager)?;
     // this.cleanupOldVirtuals();
     Ok(())
   }
 
-  fn cleanup_old_natives(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let version_manager = self.version_manager.as_ref().unwrap();
+  fn cleanup_old_natives(&self, version_manager: &mut VersionManager) -> Result<(), Box<dyn std::error::Error>> {
     let game_dir = &version_manager.game_dir;
 
     let current_time = Utc::now().timestamp_millis() as u128;

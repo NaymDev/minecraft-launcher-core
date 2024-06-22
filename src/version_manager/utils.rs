@@ -9,7 +9,7 @@ use super::{ error::ResolveManifestError, VersionManager };
 #[async_recursion]
 pub async fn resolve(
   mut version_manifest: VersionManifest,
-  version_manager: &VersionManager,
+  version_manager: &mut VersionManager,
   inheritance_trace: &mut HashSet<MCVersion>
 ) -> Result<VersionManifest, ResolveManifestError> {
   if let Some(inherits_from) = version_manifest.inherits_from {
