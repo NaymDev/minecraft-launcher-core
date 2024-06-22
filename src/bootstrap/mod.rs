@@ -1,5 +1,5 @@
 use std::{
-  collections::{ HashMap, HashSet },
+  collections::HashMap,
   env::consts::ARCH,
   fs::{ self, create_dir_all, File },
   io::{ self, Write },
@@ -127,7 +127,7 @@ impl GameBootstrap {
       local_version = version_manager.install_version_by_id(&self.options.version).await?;
     }
 
-    local_version = local_version.resolve(version_manager, HashSet::new()).await?;
+    local_version = version_manager.resolve_inheritances(local_version).await?;
 
     self.progress_reporter().clear();
     // TODO: self.migrate_old_assets()

@@ -2,15 +2,12 @@ use std::{ collections::{ HashMap, HashSet }, path::{ Path, PathBuf, MAIN_SEPARA
 
 use argument::{ Argument, ArgumentType };
 use assets::AssetIndexInfo;
-use async_recursion::async_recursion;
 use download::{ DownloadInfo, DownloadType };
 use java::JavaVersionInfo;
 use library::Library;
 use logging::LoggingEntry;
 use rule::{ OperatingSystem, Rule, RuleAction };
 use serde::{ Deserialize, Serialize };
-
-use crate::{ bootstrap::MinecraftLauncherError, version_manager::VersionManager };
 
 use super::{ Date, EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo };
 
@@ -124,94 +121,6 @@ impl VersionManifest {
     let jar_id = self.get_jar().to_string();
     vec.push(mc_dir.join("versions").join(&jar_id).join(format!("{jar_id}.jar")));
     vec
-  }
-
-  #[async_recursion]
-  pub async fn resolve(
-    &self,
-    version_manager: &VersionManager,
-    mut inheritance_trace: HashSet<&'async_recursion MCVersion>
-  ) -> Result<VersionManifest, Box<dyn std::error::Error>> {
-    if self.inherits_from.as_ref().is_none() {
-      return Ok(self.clone());
-    }
-    let inherits_from = self.inherits_from.as_ref().unwrap();
-    if !inheritance_trace.insert(&self.id) {
-      let mut trace = inheritance_trace
-        .iter()
-        .map(|ver| ver.to_string())
-        .collect::<Vec<_>>();
-      trace.reverse();
-      Err(MinecraftLauncherError(format!("Circular dependency detected! {} -> [{}]", trace.join(" -> "), self.id)))?;
-    }
-
-    let local_version: VersionManifest = if let Ok(local_version) = version_manager.get_installed_version(inherits_from) {
-      if !version_manager.is_up_to_date(&local_version).await {
-        version_manager.install_version_by_id(inherits_from).await?.clone()
-      } else {
-        local_version
-      }
-    } else {
-      version_manager.install_version_by_id(inherits_from).await?.clone()
-    };
-
-    let mut local_version = local_version.resolve(version_manager, inheritance_trace).await?;
-    local_version.inherits_from = None;
-    local_version.id = self.id.clone();
-    local_version.updated_time = self.updated_time.clone();
-    local_version.release_time = self.release_time.clone();
-    local_version.release_type = self.release_type.clone();
-
-    if let Some(minecraft_arguments) = &self.minecraft_arguments {
-      local_version.minecraft_arguments = Some(minecraft_arguments.clone());
-    }
-
-    if let Some(main_class) = &self.main_class {
-      local_version.main_class = Some(main_class.clone());
-    }
-
-    if let Some(assets) = &self.assets {
-      local_version.assets = Some(assets.clone());
-    }
-
-    if let Some(jar) = &self.jar {
-      local_version.jar = Some(jar.clone());
-    }
-
-    if let Some(asset_index) = &self.asset_index {
-      local_version.asset_index = Some(asset_index.clone());
-    }
-
-    if !self.libraries.is_empty() {
-      // local_version.libraries = self.libraries.clone();
-      let mut new_libraries = vec![];
-      new_libraries.extend(self.libraries.clone());
-      new_libraries.extend(local_version.libraries);
-
-      local_version.libraries = new_libraries;
-    }
-
-    if !self.arguments.is_empty() {
-      // local_version.arguments = self.arguments.clone();
-      for (arg_type, args) in &self.arguments {
-        if let Some(vec) = local_version.arguments.get_mut(arg_type) {
-          vec.extend(args.clone());
-        } else {
-          local_version.arguments.insert(arg_type.clone(), args.clone());
-        }
-      }
-    }
-
-    if !self.compatibility_rules.is_empty() {
-      // local_version.compatibility_rules = self.compatibility_rules.clone();
-      local_version.compatibility_rules.extend(self.compatibility_rules.clone());
-    }
-
-    if let Some(java_version) = &self.java_version {
-      local_version.java_version = Some(java_version.clone());
-    }
-
-    Ok(local_version)
   }
 }
 

@@ -1,9 +1,10 @@
 use std::{ collections::HashSet, fs::{ create_dir_all, read_dir, File }, path::PathBuf, sync::{ Arc, Mutex } };
 
 use downloader::ClientDownloader;
-use error::{ InstallVersionError, LoadVersionError };
+use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
 use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
+use utils::resolve;
 
 use crate::{
   json::{ manifest::{ rule::OperatingSystem, VersionManifest }, EnvironmentFeatures, MCVersion, VersionInfo },
@@ -13,6 +14,8 @@ use crate::{
 pub mod downloader;
 pub mod remote;
 pub mod error;
+
+mod utils;
 
 #[derive(Debug)]
 pub struct VersionManager {
@@ -155,13 +158,17 @@ impl VersionManager {
 }
 
 impl VersionManager {
+  pub async fn resolve_inheritances(&self, version_manifest: VersionManifest) -> Result<VersionManifest, ResolveManifestError> {
+    resolve(version_manifest, self, &mut HashSet::new()).await
+  }
+
   pub async fn is_up_to_date(&self, version_manifest: &VersionManifest) -> bool {
     if let Some(remote_version) = self.get_remote_version(version_manifest.get_id()) {
       if remote_version.get_updated_time().inner() > version_manifest.get_updated_time().inner() {
         return false;
       }
 
-      match version_manifest.resolve(self, HashSet::new()).await {
+      match self.resolve_inheritances(version_manifest.clone()).await {
         Ok(resolved) => { self.has_all_files(&resolved, &OperatingSystem::get_current_platform()) }
         Err(_) => {
           error!("Failed to resolve version {}", version_manifest.get_id().to_string());
@@ -208,7 +215,7 @@ mod tests {
     info!("{:#?}", version_manager.local_cache);
     let local = version_manager.get_installed_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
     if let Ok(local) = local {
-      let resolved = local.resolve(&version_manager, HashSet::new()).await?;
+      let resolved = version_manager.resolve_inheritances(local).await?;
       info!("Resolved: {:#?}", resolved);
     }
     Ok(())

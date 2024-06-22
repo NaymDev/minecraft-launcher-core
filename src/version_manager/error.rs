@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::json::{ Sha1Sum, Sha1SumError };
+use crate::json::{ MCVersion, Sha1Sum, Sha1SumError };
 
 #[derive(Error, Debug)]
 pub enum LoadVersionError {
@@ -27,4 +27,13 @@ pub enum InstallVersionError {
   #[error("failed to parse: {0}")] ParseError(#[from] serde_json::Error),
   #[error(transparent)] ChecksumError(#[from] Sha1SumError),
   #[error(transparent)] IoError(#[from] std::io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum ResolveManifestError {
+  #[error("Circular dependency detected! {} -> [{}]", inheritance_trace.join(" -> "), problem)] CircularDependency {
+    inheritance_trace: Vec<String>,
+    problem: MCVersion,
+  },
+  #[error(transparent)] InstallVersionError(#[from] InstallVersionError),
 }
