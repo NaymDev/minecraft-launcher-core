@@ -33,7 +33,11 @@ pub fn get_library_downloadables(
   os: Option<OperatingSystem>
 ) -> Vec<Box<dyn Downloadable + Send + Sync>> {
   let os = os.unwrap_or(OperatingSystem::get_current_platform());
-  local_version.get_required_downloadables(&os, game_dir, false, env_features)
+  local_version
+    .get_relevant_libraries(env_features)
+    .into_iter()
+    .flat_map(|lib| lib.create_download(game_dir, &os, false))
+    .collect()
 }
 
 pub async fn get_asset_downloadables(

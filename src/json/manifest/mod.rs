@@ -10,7 +10,7 @@ use logging::LoggingEntry;
 use rule::{ OperatingSystem, Rule, RuleAction };
 use serde::{ Deserialize, Serialize };
 
-use crate::{ bootstrap::MinecraftLauncherError, download_utils::downloadables::Downloadable, version_manager::VersionManager };
+use crate::{ bootstrap::MinecraftLauncherError, version_manager::VersionManager };
 
 use super::{ Date, EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo };
 
@@ -67,20 +67,6 @@ impl VersionManifest {
     self.libraries
       .iter()
       .filter(|lib| lib.applies_to_current_environment(env_features))
-      .collect()
-  }
-
-  pub fn get_required_downloadables(
-    &self,
-    os: &OperatingSystem,
-    mc_dir: &Path,
-    force_download: bool,
-    env_features: &EnvironmentFeatures
-  ) -> Vec<Box<dyn Downloadable + Send + Sync>> {
-    self
-      .get_relevant_libraries(env_features)
-      .into_iter()
-      .flat_map(|lib| lib.create_download(mc_dir, os, force_download))
       .collect()
   }
 
