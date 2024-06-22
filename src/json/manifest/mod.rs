@@ -33,33 +33,33 @@ pub struct VersionManifest {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub asset_index: Option<AssetIndexInfo>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  assets: Option<String>,
+  pub assets: Option<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  compatibility_rules: Vec<Rule>,
+  pub compatibility_rules: Vec<Rule>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  compliance_level: Option<u8>,
+  pub compliance_level: Option<u8>,
   #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-  downloads: HashMap<DownloadType, DownloadInfo>,
-  id: MCVersion,
+  pub downloads: HashMap<DownloadType, DownloadInfo>,
+  pub id: MCVersion,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  inherits_from: Option<MCVersion>,
+  pub inherits_from: Option<MCVersion>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  java_version: Option<JavaVersionInfo>,
+  pub java_version: Option<JavaVersionInfo>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  libraries: Vec<Library>,
+  pub libraries: Vec<Library>,
   #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-  logging: HashMap<DownloadType, LoggingEntry>,
+  pub logging: HashMap<DownloadType, LoggingEntry>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  main_class: Option<String>,
+  pub main_class: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  jar: Option<MCVersion>,
+  pub jar: Option<MCVersion>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  minimum_launcher_version: Option<u32>,
-  release_time: Date,
+  pub minimum_launcher_version: Option<u32>,
+  pub release_time: Date,
   #[serde(rename = "time")]
-  updated_time: Date,
+  pub updated_time: Date,
   #[serde(rename = "type")]
-  release_type: ReleaseType,
+  pub release_type: ReleaseType,
 }
 
 impl VersionManifest {
