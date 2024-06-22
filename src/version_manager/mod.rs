@@ -1,23 +1,16 @@
-use std::{ collections::HashSet, fs::{ self, create_dir_all, read_dir, File }, io::{ self, Cursor }, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
+use std::{ collections::HashSet, fs::{ create_dir_all, read_dir, File }, path::PathBuf, sync::{ Arc, Mutex } };
 
+use downloader::ClientDownloader;
 use error::{ InstallVersionError, LoadVersionError };
 use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
-use reqwest::Client;
-use sha1::{ Digest, Sha1 };
 
 use crate::{
-  download_utils::{ download_job::DownloadJob, downloadables::{ AssetDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable } },
-  json::{
-    manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, rule::OperatingSystem, VersionManifest },
-    EnvironmentFeatures,
-    MCVersion,
-    Sha1Sum,
-    VersionInfo,
-  },
+  json::{ manifest::{ rule::OperatingSystem, VersionManifest }, EnvironmentFeatures, MCVersion, VersionInfo },
   progress_reporter::ProgressReporter,
 };
 
+pub mod downloader;
 pub mod remote;
 pub mod error;
 
@@ -187,24 +180,8 @@ impl VersionManager {
     max_download_attempts: u8,
     progress_reporter: &Arc<ProgressReporter>
   ) -> Result<(), Box<dyn std::error::Error>> {
-    let job1 = DownloadJob::new("Version & Libraries")
-      .ignore_failures(false)
-      .concurrent_downloads(max_concurrent_downloads)
-      .max_download_attempts(max_download_attempts)
-      .with_progress_reporter(progress_reporter)
-      .add_downloadables(self.get_version_downloadables(version_manifest));
-
-    let job2 = DownloadJob::new("Resources")
-      .ignore_failures(false)
-      .concurrent_downloads(max_concurrent_downloads)
-      .max_download_attempts(max_download_attempts)
-      .with_progress_reporter(progress_reporter)
-      .add_downloadables(self.get_resource_downloadables(&self.game_dir, version_manifest).await?);
-
-    // Download one at a time
-    job1.start().await?;
-    job2.start().await?;
-    Ok(())
+    let downloader = ClientDownloader::new(max_concurrent_downloads as usize, max_download_attempts as usize, Arc::clone(progress_reporter));
+    downloader.download_version(version_manifest, self).await
   }
 }
 
@@ -213,76 +190,6 @@ impl VersionManager {
   fn has_all_files(&self, local: &VersionManifest, os: &OperatingSystem) -> bool {
     let required_files = local.get_required_files(os, &self.env_features);
     required_files.iter().all(|file| self.game_dir.join(file).is_file())
-  }
-
-  pub fn get_jar_downloadable(game_dir: &Path, local_version: &VersionManifest) -> Box<dyn Downloadable + Send + Sync> {
-    let version_id = local_version.get_id().to_string();
-    let jar_path = game_dir.join("versions").join(&version_id).join(format!("{}.jar", &version_id));
-
-    if let Some(DownloadInfo { sha1, url, .. }) = local_version.get_download_url(DownloadType::Client) {
-      Box::new(PreHashedDownloadable::new(url, &jar_path, false, sha1.clone()))
-    } else {
-      let url = format!("https://s3.amazonaws.com/Minecraft.Download/versions/{}/{}.jar", &version_id, &version_id);
-      Box::new(EtagDownloadable::new(&url, &jar_path, false))
-    }
-  }
-
-  pub fn get_version_downloadables(&self, local_version: &VersionManifest) -> Vec<Box<dyn Downloadable + Send + Sync>> {
-    let mut downloadables = local_version.get_required_downloadables(
-      &OperatingSystem::get_current_platform(),
-      &self.game_dir,
-      false,
-      &self.env_features
-    );
-
-    let jar_downloadable = Self::get_jar_downloadable(&self.game_dir, local_version);
-    downloadables.push(jar_downloadable);
-    downloadables
-  }
-
-  pub async fn get_resource_downloadables(
-    &self,
-    game_dir: &Path,
-    local_version: &VersionManifest
-  ) -> Result<Vec<Box<dyn Downloadable + Send + Sync>>, Box<dyn std::error::Error>> {
-    let assets_dir = game_dir.join("assets");
-    let objects_dir = assets_dir.join("objects");
-    let indexes_dir = assets_dir.join("indexes");
-
-    let index_info = local_version.asset_index.as_ref().ok_or("Asset index not found in version manifest!")?;
-    let index_file = indexes_dir.join(format!("{}.json", index_info.id));
-
-    if let Ok(mut file) = File::open(&index_file) {
-      // Obtain the SHA-1 hash of the already downloaded index file
-      let mut sha1 = Sha1::new();
-      io::copy(&mut file, &mut sha1)?;
-      let sha1 = Sha1Sum::new(sha1.finalize().into());
-
-      // If the hash is incorrect, redownload
-      if sha1 != index_info.sha1 {
-        warn!("Asset index file is invalid, redownloading");
-        fs::remove_file(&index_file)?;
-      }
-    }
-
-    // Parse the asset index file
-    let asset_index: AssetIndex = if let Ok(file) = File::open(&index_file) {
-      serde_json::from_reader(file)?
-    } else {
-      // Download asset index file and parse it
-      let bytes = Client::new().get(&index_info.url).send().await?.bytes().await?;
-      create_dir_all(indexes_dir)?;
-      fs::write(&index_file, &bytes)?;
-      serde_json::from_reader(&mut Cursor::new(&bytes))?
-    };
-
-    // Turn each resource object into a downloadable
-    let mut downloadables: Vec<Box<dyn Downloadable + Send + Sync>> = vec![];
-    for (asset_object, asset_name) in asset_index.get_unique_objects() {
-      downloadables.push(Box::new(AssetDownloadable::new(asset_name, asset_object, "https://resources.download.minecraft.net/", &objects_dir)));
-    }
-
-    Ok(downloadables)
   }
 }
 
