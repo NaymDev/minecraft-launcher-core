@@ -7,7 +7,7 @@ use reqwest::Client;
 use sha1::{ Digest, Sha1 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{ download_utils::error::Error, json::Sha1Sum };
+use crate::{ version_manager::downloader::error::Error, json::Sha1Sum };
 
 use super::{ Downloadable, DownloadableMonitor };
 

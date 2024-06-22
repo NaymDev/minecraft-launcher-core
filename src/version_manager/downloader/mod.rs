@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
+use download_job::DownloadJob;
 use utils::{ get_jar_downloadable, get_library_downloadables, get_asset_downloadables };
 
-use crate::{ download_utils::download_job::DownloadJob, json::manifest::VersionManifest, progress_reporter::ProgressReporter };
+use crate::{ json::manifest::VersionManifest, progress_reporter::ProgressReporter };
 
 use super::VersionManager;
 
+pub mod download_job;
+pub mod downloadables;
 pub mod utils;
+pub mod error;
 
 pub struct ClientDownloader {
   pub concurrent_downloads: usize,

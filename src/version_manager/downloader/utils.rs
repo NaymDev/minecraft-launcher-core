@@ -5,7 +5,7 @@ use reqwest::{ Client, Url };
 use sha1::{ Digest, Sha1 };
 
 use crate::{
-  download_utils::downloadables::{ AssetDownloadable, ChecksummedDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
+  version_manager::downloader::downloadables::{ AssetDownloadable, ChecksummedDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
   json::{
     manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, library::Library, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,

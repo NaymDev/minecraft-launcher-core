@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::{ header::HeaderValue, Client };
 
-use crate::download_utils::error::Error;
+use crate::version_manager::downloader::error::Error;
 
 use super::{ Downloadable, DownloadableMonitor };
 

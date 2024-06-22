@@ -1,4 +1,3 @@
-pub mod download_utils;
 pub mod version_manager;
 pub mod progress_reporter;
 
