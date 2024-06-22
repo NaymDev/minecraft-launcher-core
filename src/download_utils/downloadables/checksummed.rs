@@ -7,9 +7,9 @@ use reqwest::Client;
 use sha1::{ Digest, Sha1 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::Sha1Sum };
+use crate::{ download_utils::error::Error, json::Sha1Sum };
 
-use super::Downloadable;
+use super::{ Downloadable, DownloadableMonitor };
 
 /// Both the file and the checksum are on the remote server
 pub struct ChecksummedDownloadable {

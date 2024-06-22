@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::{ header::HeaderValue, Client };
 
-use crate::download_utils::{ error::Error, DownloadableMonitor };
+use crate::download_utils::error::Error;
 
-use super::Downloadable;
+use super::{ Downloadable, DownloadableMonitor };
 
 pub struct EtagDownloadable {
   pub url: String,

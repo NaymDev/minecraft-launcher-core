@@ -1,10 +1,12 @@
-use std::{ fs::create_dir_all, path::{ Path, PathBuf }, sync::Arc };
+use std::{ fs::create_dir_all, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
 use log::info;
 use reqwest::Client;
 
-use super::{ error::Error, DownloadableMonitor };
+use crate::progress_reporter::ProgressReporter;
+
+use super::error::Error;
 
 mod checksummed;
 mod prehashed;
@@ -43,4 +45,49 @@ pub trait Downloadable: Send + Sync {
   }
 
   async fn download(&self, client: &Client) -> Result<(), Error>;
+}
+
+pub struct DownloadableMonitor {
+  current: Mutex<usize>,
+  total: Mutex<usize>,
+  reporter: Mutex<Arc<ProgressReporter>>,
+}
+
+impl DownloadableMonitor {
+  pub fn new(current: usize, total: usize) -> Self {
+    Self {
+      current: Mutex::new(current),
+      total: Mutex::new(total),
+      reporter: Mutex::new(Arc::new(ProgressReporter::new(|_| {}))),
+    }
+  }
+
+  pub fn get_current(&self) -> usize {
+    *self.current.lock().unwrap()
+  }
+
+  pub fn get_total(&self) -> usize {
+    *self.total.lock().unwrap()
+  }
+
+  pub fn set_current(&self, current: usize) {
+    *self.current.lock().unwrap() = current;
+    self.reporter
+      .lock()
+      .unwrap()
+      .set_progress(current as u32);
+  }
+
+  pub fn set_total(&self, total: usize) {
+    *self.total.lock().unwrap() = total;
+    self.reporter
+      .lock()
+      .unwrap()
+      .set_total(total as u32);
+  }
+
+  pub fn set_reporter(&self, reporter: Arc<ProgressReporter>) {
+    *self.reporter.lock().unwrap() = reporter;
+    // TODO: fire update?
+  }
 }

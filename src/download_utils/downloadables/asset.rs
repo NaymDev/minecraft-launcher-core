@@ -8,9 +8,9 @@ use reqwest::{ Client, Url };
 use sha1::{ Digest, Sha1 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{ download_utils::{ error::Error, DownloadableMonitor }, json::{ manifest::assets::AssetObject, Sha1Sum } };
+use crate::{ download_utils::error::Error, json::{ manifest::assets::AssetObject, Sha1Sum } };
 
-use super::Downloadable;
+use super::{ Downloadable, DownloadableMonitor };
 
 pub struct AssetDownloadable {
   pub url: String,
