@@ -111,20 +111,11 @@ impl GameBootstrap {
     info!("Queuing library & version downloads");
 
     self.progress_reporter().set_status("Resolving local version").set_progress(1);
-    let mut local_version = match version_manager.get_installed_version(&self.options.version) {
-      Ok(local_version) => local_version,
-      Err(_) => { version_manager.install_version_by_id(&self.options.version).await? }
-    };
+    let local_version = version_manager.resolve_local_version(&self.options.version, true).await?;
 
     if !local_version.applies_to_current_environment(&self.options.env_features()) {
       return Err(MinecraftLauncherError(format!("Version {} is is incompatible with the current environment", self.options.version)).into());
     }
-
-    if !version_manager.is_up_to_date(&local_version).await {
-      local_version = version_manager.install_version_by_id(&self.options.version).await?;
-    }
-
-    local_version = version_manager.resolve_inheritances(local_version).await?;
 
     self.progress_reporter().clear();
     // TODO: self.migrate_old_assets()
