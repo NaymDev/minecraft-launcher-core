@@ -9,13 +9,13 @@ use std::{
 
 use argument_substitutor::ArgumentSubstitutorBuilder;
 use chrono::{ Utc, Timelike };
+use error::Error;
 use log::{ info, error, debug, warn };
 use options::{ GameOptions, ProxyOptions };
 use os_info::Type::Windows;
 use process::{ GameProcess, GameProcessBuilder };
 use regex::Regex;
 use serde_json::json;
-use thiserror::Error;
 use zip::ZipArchive;
 
 use crate::{
@@ -32,15 +32,12 @@ pub mod auth;
 pub mod options;
 pub mod process;
 pub mod argument_substitutor;
+mod error;
 
 const DEFAULT_JRE_ARGUMENTS_32BIT: &str =
   "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M";
 const DEFAULT_JRE_ARGUMENTS_64BIT: &str =
   "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M";
-
-#[derive(Error, Debug)]
-#[error("{0}")]
-pub struct MinecraftLauncherError(pub String);
 
 pub struct GameBootstrap {
   pub options: GameOptions,
@@ -114,7 +111,7 @@ impl GameBootstrap {
     let local_version = version_manager.resolve_local_version(&self.options.version, true).await?;
 
     if !local_version.applies_to_current_environment(&self.options.env_features()) {
-      return Err(MinecraftLauncherError(format!("Version {} is is incompatible with the current environment", self.options.version)).into());
+      return Err(format!("Version {} is is incompatible with the current environment", self.options.version).into());
     }
 
     self.progress_reporter().clear();
@@ -127,10 +124,10 @@ impl GameBootstrap {
     ).await?;
 
     self.local_version = Some(local_version);
-    self.launch_game(version_manager).await
+    Ok(self.launch_game(version_manager).await?)
   }
 
-  async fn launch_game(&mut self, mut version_manager: VersionManager) -> Result<GameProcess, Box<dyn std::error::Error>> {
+  async fn launch_game(&mut self, mut version_manager: VersionManager) -> Result<GameProcess, Error> {
     info!("Launching game");
 
     let natives_dir = self.get_version_dir().join(format!("{}-natives-{}", self.options.version, Utc::now().nanosecond()));
@@ -142,13 +139,13 @@ impl GameBootstrap {
 
     if let Err(err) = self.unpack_natives(&natives_dir) {
       error!("Couldn't unpack natives! {err}");
-      Err(MinecraftLauncherError(format!("Couldn't unpack natives! {err}")))?;
+      return Err(Error::UnpackNatives(Box::new(err)));
     }
 
     let virtual_dir = self.reconstruct_assets();
-    if let Err(err) = &virtual_dir {
+    if let Err(err) = virtual_dir {
       error!("Couldn't unpack natives! {err}");
-      Err(MinecraftLauncherError(format!("Couldn't unpack natives! {err}")))?;
+      return Err(Error::UnpackNatives(err));
     }
     self.virtual_dir = virtual_dir.ok();
 
@@ -159,11 +156,11 @@ impl GameBootstrap {
     if !game_dir.exists() {
       if fs::create_dir_all(game_dir).is_err() {
         error!("Aborting launch; couldn't create game directory");
-        Err(MinecraftLauncherError("Aborting launch; couldn't create game directory".to_string()))?;
+        return Err(Error::Launch("couldn't create game directory"));
       }
     } else if !game_dir.is_dir() {
       error!("Aborting launch; game directory is not actually a directory");
-      Err(MinecraftLauncherError("Aborting launch; game directory is not actually a directory".to_string()))?;
+      return Err(Error::Launch("game directory is not actually a directory"));
     }
 
     let server_resource_packs_dir = game_dir.join("server-resource-packs");
@@ -290,13 +287,11 @@ impl GameBootstrap {
 
     self.perform_cleanups(&mut version_manager)?;
 
-    match process {
-      Ok(process) => Ok(process),
-      Err(err) => Err(Box::new(MinecraftLauncherError(format!("Failed to launch game: {err}")))),
-    }
+    process.map_err(Error::Game)
   }
 
-  fn perform_cleanups(&self, version_manager: &mut VersionManager) -> Result<(), Box<dyn std::error::Error>> {
+  fn perform_cleanups(&self, version_manager: &mut VersionManager) -> Result<(), Error> {
+    // TODO:
     // this.cleanupOrphanedVersions();
     // this.cleanupOrphanedAssets();
     // this.cleanupOldSkins();
@@ -305,7 +300,7 @@ impl GameBootstrap {
     Ok(())
   }
 
-  fn cleanup_old_natives(&self, version_manager: &mut VersionManager) -> Result<(), Box<dyn std::error::Error>> {
+  fn cleanup_old_natives(&self, version_manager: &mut VersionManager) -> Result<(), Error> {
     let game_dir = &version_manager.game_dir;
 
     let current_time = Utc::now().timestamp_millis() as u128;
@@ -335,15 +330,11 @@ impl GameBootstrap {
     Ok(())
   }
 
-  fn unpack_natives(&self, natives_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+  fn unpack_natives(&self, natives_dir: &Path) -> Result<(), Error> {
     let os = OperatingSystem::get_current_platform();
     let libs = self.local_version.as_ref().unwrap().get_relevant_libraries(&self.options.env_features());
 
-    fn unpack_native(
-      natives_dir: &Path,
-      mut zip_archive: ZipArchive<File>,
-      extract_rules: Option<&ExtractRules>
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn unpack_native(natives_dir: &Path, mut zip_archive: ZipArchive<File>, extract_rules: Option<&ExtractRules>) -> Result<(), Error> {
       for i in 0..zip_archive.len() {
         let mut file = zip_archive.by_index(i).unwrap();
         let file_zip_path = file.enclosed_name().unwrap().to_owned();
@@ -516,13 +507,13 @@ impl GameBootstrap {
     substitutor.build()
   }
 
-  fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, MinecraftLauncherError> {
+  fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, Error> {
     let os = OperatingSystem::get_current_platform();
     let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
     let classpath = local_version.get_classpath(&os, &self.options.game_dir, &self.options.env_features());
     for path in &classpath {
       if !path.is_file() {
-        return Err(MinecraftLauncherError(format!("Classpath file not found: {}", path.display())));
+        return Err(Error::ClasspathFileNotFound(path.to_path_buf()));
       }
     }
     Ok(
