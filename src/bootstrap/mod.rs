@@ -62,6 +62,7 @@ impl GameBootstrap {
 
 impl GameBootstrap {
   pub async fn launch_game(&mut self, manifest: &VersionManifest) -> Result<GameProcess, Error> {
+    let os = OperatingSystem::get_current_platform();
     let game_dir = &self.options.game_dir;
     let env_features = &self.env_features;
     info!("Launching game");
@@ -120,12 +121,12 @@ impl GameBootstrap {
       }
     } else if manifest.minecraft_arguments.is_some() {
       // Manifest uses old format
-      if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
+      if os == OperatingSystem::Windows {
         game_process_builder.with_argument("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump");
         if self.is_win_ten() {
           game_process_builder.with_arguments(vec!["-Dos.name=Windows 10", "-Dos.version=10.0"]);
         }
-      } else if OperatingSystem::get_current_platform() == OperatingSystem::Osx {
+      } else if os == OperatingSystem::Osx {
         game_process_builder.with_arguments(substitutor.substitute_all(vec!["-Xdock:icon=${asset=icons/minecraft.icns}", "-Xdock:name=Minecraft"]));
       }
 
@@ -258,7 +259,7 @@ impl GameBootstrap {
   /// If no asset index file is found in the assets directory, it will silently fail.
   ///
   /// # Arguments
-  /// * `version_manifest` - A reference to the `VersionManifest` which contains information
+  /// * `manifest` - A reference to the `VersionManifest` which contains information
   ///   about the asset index and other version details.
   ///
   /// # Returns
@@ -271,8 +272,8 @@ impl GameBootstrap {
   /// - No asset index is found in the provided manifest (`NoAssetIndex`).
   /// - Failure to open or parse the asset index file (`OpenAssetIndex`, `ParseAssetIndex`).
   /// - Errors reading asset objects or unpacking them into the target directory (`ReadAssetObject`, `UnpackAssetObject`).
-  fn reconstruct_assets(&self, version_manifest: &VersionManifest) -> Result<PathBuf, UnpackAssetsError> {
-    let asset_index_info = version_manifest.asset_index.as_ref().ok_or(UnpackAssetsError::NoAssetIndex)?;
+  fn reconstruct_assets(&self, manifest: &VersionManifest) -> Result<PathBuf, UnpackAssetsError> {
+    let asset_index_info = manifest.asset_index.as_ref().ok_or(UnpackAssetsError::NoAssetIndex)?;
 
     let assets_dir = self.options.game_dir.join("assets");
     let indexes_dir = assets_dir.join("indexes");
@@ -410,10 +411,10 @@ impl GameBootstrap {
     Ok(substitutor.build())
   }
 
-  fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, Error> {
+  fn construct_classpath(&self, manifest: &VersionManifest) -> Result<String, Error> {
     let os = OperatingSystem::get_current_platform();
     let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
-    let classpath = local_version.get_classpath(&os, &self.options.game_dir, &self.env_features);
+    let classpath = manifest.get_classpath(&os, &self.options.game_dir, &self.env_features);
 
     let mut vec = vec![];
     for path in &classpath {
