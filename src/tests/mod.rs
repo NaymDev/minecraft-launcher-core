@@ -139,7 +139,6 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .java_path(java_path)
     .authentication(UserAuthentication::offline("MonkeyKiller_"))
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
-    .progress_reporter_arc(&reporter)
     .max_concurrent_downloads(32)
     .build()?;
 

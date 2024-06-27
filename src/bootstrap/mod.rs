@@ -2,7 +2,6 @@ use std::{ collections::HashMap, env::consts::ARCH, fs::{ self, create_dir_all, 
 
 use argument_substitutor::{ ArgumentSubstitutor, ArgumentSubstitutorBuilder };
 use chrono::Utc;
-use error::{ Error, UnpackAssetsError, UnpackNativesError };
 use log::{ info, error, debug, warn };
 use options::{ GameOptions, LauncherOptions, ProxyOptions };
 use os_info::Type::Windows;
@@ -31,7 +30,9 @@ pub mod auth;
 pub mod options;
 pub mod process;
 pub mod argument_substitutor;
+
 mod error;
+pub use error::{ Error, UnpackAssetsError, UnpackNativesError };
 
 const DEFAULT_JRE_ARGUMENTS_32BIT: &str =
   "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M";
