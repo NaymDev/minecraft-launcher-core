@@ -1,11 +1,4 @@
-use std::{
-  collections::HashMap,
-  env::consts::ARCH,
-  fs::{ self, create_dir_all, File },
-  io::{ self },
-  path::{ Path, PathBuf, MAIN_SEPARATOR_STR },
-  sync::Arc,
-};
+use std::{ collections::HashMap, env::consts::ARCH, fs::{ self, create_dir_all, File }, io::{ self }, path::{ Path, PathBuf, MAIN_SEPARATOR_STR } };
 
 use argument_substitutor::{ ArgumentSubstitutor, ArgumentSubstitutorBuilder };
 use chrono::Utc;
@@ -31,7 +24,6 @@ use crate::{
     Sha1Sum,
     VersionInfo,
   },
-  progress_reporter::ProgressReporter,
   version_manager::VersionManager,
 };
 
@@ -70,10 +62,6 @@ impl GameBootstrap {
     self.virtual_dir.as_ref().unwrap()
   }
 
-  fn get_version_dir(&self) -> PathBuf {
-    self.options.game_dir.join("versions").join(self.options.version.to_string())
-  }
-
   fn get_assets_dir(&self) -> PathBuf {
     self.options.game_dir.join("assets")
   }
@@ -90,40 +78,9 @@ impl GameBootstrap {
     let os = os_info::get();
     os.os_type() == Windows && os.edition().is_some_and(|edition| edition.contains("Windows 10"))
   }
-
-  fn progress_reporter(&self) -> &Arc<ProgressReporter> {
-    &self.options.progress_reporter
-  }
 }
 
 impl GameBootstrap {
-  pub async fn launch(&mut self) -> Result<GameProcess, Box<dyn std::error::Error>> {
-    // TODO: maybe initialize everything here and avoid initializing another instance with the same game runner until it's completed
-    self.progress_reporter().set("Fetching version manifest", 0, 2);
-    let mut version_manager = VersionManager::new(self.options.game_dir.clone(), self.options.env_features()).await?;
-    // self.version_manager.refresh().await?;
-    info!("Queuing library & version downloads");
-
-    self.progress_reporter().set_status("Resolving local version").set_progress(1);
-    let local_version = version_manager.resolve_local_version(&self.options.version, true).await?;
-
-    if !local_version.applies_to_current_environment(&self.options.env_features()) {
-      return Err(format!("Version {} is is incompatible with the current environment", self.options.version).into());
-    }
-
-    self.progress_reporter().clear();
-    // TODO: self.migrate_old_assets()
-    version_manager.download_required_files(
-      &local_version,
-      self.options.max_concurrent_downloads,
-      self.options.max_download_attempts,
-      self.progress_reporter()
-    ).await?;
-
-    // self.local_version = Some(local_version);
-    Ok(self.launch_game().await?)
-  }
-
   pub async fn launch_game(&mut self) -> Result<GameProcess, Error> {
     let game_dir = &self.options.game_dir;
     let env_features = &self.env_features;
@@ -277,46 +234,6 @@ impl GameBootstrap {
     }
 
     game_process_builder.spawn()
-  }
-
-  fn perform_cleanups(&self, version_manager: &mut VersionManager) -> Result<(), Error> {
-    // TODO:
-    // this.cleanupOrphanedVersions();
-    // this.cleanupOrphanedAssets();
-    // this.cleanupOldSkins();
-    self.cleanup_old_natives(version_manager)?;
-    // this.cleanupOldVirtuals();
-    Ok(())
-  }
-
-  fn cleanup_old_natives(&self, version_manager: &mut VersionManager) -> Result<(), Error> {
-    let game_dir = &version_manager.game_dir;
-
-    let current_time = Utc::now().timestamp_millis() as u128;
-    // let time_threshold = Duration::from_secs(3600);
-
-    for version_id in version_manager.installed_versions() {
-      let version_id = version_id.to_string();
-      let version_dir = game_dir.join("versions").join(&version_id);
-      let dirs: Vec<PathBuf> = fs
-        ::read_dir(&version_dir)?
-        .filter_map(|file| file.ok())
-        .filter(|file| file.file_type().unwrap().is_dir())
-        .map(|file| file.file_name().to_str().unwrap().to_string())
-        .filter(|name| name.starts_with(&format!("{version_id}-natives-")))
-        .map(|name| version_dir.join(name))
-        .collect();
-      for native_dir in dirs {
-        let modified_time = native_dir.metadata()?.modified()?;
-        if current_time - modified_time.elapsed()?.as_millis() >= 3600000 {
-          debug!("Deleting {}", native_dir.display());
-          if let Err(err) = fs::remove_dir_all(&native_dir) {
-            warn!("Failed to delete {}: {}", native_dir.display(), err);
-          }
-        }
-      }
-    }
-    Ok(())
   }
 
   fn unpack_natives(&self, manifest: &VersionManifest) -> Result<(), Error> {
