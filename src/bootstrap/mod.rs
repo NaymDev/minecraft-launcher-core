@@ -337,6 +337,7 @@ impl GameBootstrap {
   }
 
   fn create_arguments_substitutor(&self, manifest: &VersionManifest, game_assets_dir: &Path) -> Result<ArgumentSubstitutor, Error> {
+    let asset_index_info = manifest.asset_index.as_ref();
     let mut substitutor = ArgumentSubstitutorBuilder::new();
 
     let classpath_separator = if OperatingSystem::get_current_platform() == OperatingSystem::Windows { ";" } else { ":" };
@@ -355,7 +356,6 @@ impl GameBootstrap {
 
     let asset_index_substitutions = {
       let mut map = HashMap::new();
-      let asset_index_info = manifest.asset_index.as_ref();
 
       if let Some(asset_index) = asset_index_info.and_then(|info| self.get_asset_index(info).ok()) {
         let objects_dir = assets_dir.join("objects");
@@ -383,11 +383,10 @@ impl GameBootstrap {
     substitutor
       .add("profile_name", "")
       .add("version_name", &version_id)
-      // TODO: avoid unwraps
-      .add("game_directory", game_dir.to_str().unwrap())
-      .add("game_assets", game_assets_dir.to_str().unwrap())
-      .add("assets_root", assets_dir.to_str().unwrap())
-      .add("assets_index_name", &manifest.asset_index.as_ref().unwrap().id)
+      .add("game_directory", game_dir.to_str().unwrap_or_default())
+      .add("game_assets", game_assets_dir.to_str().unwrap_or_default())
+      .add("assets_root", assets_dir.to_str().unwrap_or_default())
+      .add("assets_index_name", asset_index_info.map(|info| info.id.as_str()).unwrap_or_default())
       .add("version_type", manifest.get_type().get_name());
 
     if let Some(resolution) = &self.options.resolution {
@@ -408,16 +407,16 @@ impl GameBootstrap {
     }
 
     substitutor
-      .add("natives_directory", natives_dir.to_str().unwrap())
+      .add("natives_directory", natives_dir.to_str().unwrap_or_default())
 
       .add("classpath", &classpath)
       .add("classpath_separator", classpath_separator)
-      .add("primary_jar", jar_path.to_str().unwrap());
+      .add("primary_jar", jar_path.to_str().unwrap_or_default());
 
     substitutor.add("clientid", ""); // TODO: figure out
     substitutor.add("auth_xuid", auth.xuid().unwrap_or_default());
 
-    substitutor.add("library_directory", libraries_dir.to_str().unwrap()); // Forge compatibility
+    substitutor.add("library_directory", libraries_dir.to_str().unwrap_or_default()); // Forge compatibility
 
     // substitutor.add_all(self.options.authentication.get_extra_substitutors());
     substitutor.add_all(self.options.substitutor_overrides.clone()); // Override if needed
