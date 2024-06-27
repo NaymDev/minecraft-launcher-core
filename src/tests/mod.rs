@@ -149,7 +149,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   info!("Queuing library & version downloads");
   reporter.set_status("Resolving local version").set_progress(1);
-  let local_version = version_manager.resolve_local_version(&game_options.version, true).await?;
+  let local_version = version_manager.resolve_local_version(&game_options.version, true, true).await?;
   if !local_version.applies_to_current_environment(&env_features) {
     return Err(format!("Version {} is is incompatible with the current environment", game_options.version).into());
   }
@@ -161,8 +161,6 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     game_options.max_download_attempts,
     &reporter
   ).await?;
-
-  let _ = version_manager.resolve_local_version(&game_options.version, true).await?;
 
   let mut game_runner = GameBootstrap::new(game_options, Some(version_manager));
   let mut process = game_runner.launch_game().await?;

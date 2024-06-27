@@ -1,4 +1,4 @@
-use std::{ collections::HashSet, fs::{ create_dir_all, read_dir, File }, path::PathBuf, sync::Arc };
+use std::{ collections::{ HashMap, HashSet }, fs::{ create_dir_all, read_dir, File }, path::PathBuf, sync::Arc };
 
 use downloader::ClientDownloader;
 use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
@@ -24,11 +24,13 @@ pub struct VersionManager {
 
   local_cache: Vec<MCVersion>,
   remote_cache: Option<RawVersionList>,
+
+  resolved_versions_cache: HashMap<MCVersion, VersionManifest>,
 }
 
 impl VersionManager {
   pub async fn new(game_dir: PathBuf, env_features: EnvironmentFeatures) -> Result<Self, LoadVersionError> {
-    let mut version_manager = Self { game_dir, env_features, local_cache: vec![], remote_cache: None };
+    let mut version_manager = Self { game_dir, env_features, local_cache: vec![], remote_cache: None, resolved_versions_cache: HashMap::new() };
     version_manager.refresh().await?;
     Ok(version_manager)
   }
@@ -77,6 +79,10 @@ impl VersionManager {
     }
     self.load_manifest(version_id)
   }
+
+  pub fn get_resolved_version_cache(&self, version_id: &MCVersion) -> Option<&VersionManifest> {
+    self.resolved_versions_cache.get(version_id)
+  }
 }
 
 impl VersionManager {
@@ -88,6 +94,7 @@ impl VersionManager {
 
   fn refresh_local_versions(&mut self) -> Result<(), LoadVersionError> {
     self.local_cache.clear();
+    self.resolved_versions_cache.clear();
 
     let versions_dir = &self.game_dir.join("versions");
     match read_dir(versions_dir) {
@@ -135,16 +142,18 @@ impl VersionManager {
 impl VersionManager {
   /// Resolves the full version manifest for a given Minecraft version, optionally updating it if not up-to-date.
   ///
-  /// This function first checks if the specified version is already installed. If it is, it uses the installed version.
+  /// If enabled, the function will first check if the specified version was already resolved in the cache. If so, it will return a clone of the cached manifest.
+  /// Otherwise, the function first checks if the specified version is already installed. If it is, it uses the installed version.
   /// If not, it installs the version. If the `update_if_necessary` flag is set and the installed version is not up-to-date,
   /// it updates the version by reinstalling it.
   ///
   /// # Arguments
   /// * `version_id` - A reference to the version identifier for which the manifest needs to be resolved.
   /// * `update_if_necessary` - A boolean flag indicating whether to update the version if it is not up-to-date.
+  /// * `ignore_cache` - A boolean flag indicating whether to ignore the cache of resolved versions.
   ///
   /// # Returns
-  /// This function returns a `Result` containing either the fully resolved `VersionManifest` or an error boxed as `dyn std::error::Error`.
+  /// This function returns a `Result` containing either the fully resolved `VersionManifest` or an error.
   ///
   /// # Errors
   /// This function can return an error if there is a problem with installing the version, checking its update status,
@@ -154,9 +163,20 @@ impl VersionManager {
   /// ```
   /// let mut resolver = VersionResolver::new();
   /// let version_id = MCVersion::new("1.16.4");
-  /// let manifest = resolver.resolve(&version_id, true).await?;
+  /// let manifest = resolver.resolve(&version_id, true, true).await?;
   /// ```
-  pub async fn resolve_local_version(&mut self, version_id: &MCVersion, update_if_necessary: bool) -> Result<VersionManifest, ResolveManifestError> {
+  pub async fn resolve_local_version(
+    &mut self,
+    version_id: &MCVersion,
+    update_if_necessary: bool,
+    ignore_cache: bool
+  ) -> Result<VersionManifest, ResolveManifestError> {
+    if !ignore_cache {
+      if let Some(manifest) = self.get_resolved_version_cache(version_id) {
+        return Ok(manifest.clone());
+      }
+    }
+
     let mut manifest = if let Ok(manifest) = self.get_installed_version(version_id) {
       manifest
     } else {
@@ -167,7 +187,9 @@ impl VersionManager {
       manifest = self.install_version_by_id(version_id).await?;
     }
 
-    self.resolve_inheritances(manifest).await
+    let resolved = self.resolve_inheritances(manifest).await?;
+    self.resolved_versions_cache.insert(resolved.id.clone(), resolved.clone());
+    Ok(resolved)
   }
 
   pub async fn install_version_by_id(&mut self, version_id: &MCVersion) -> Result<VersionManifest, InstallVersionError> {
