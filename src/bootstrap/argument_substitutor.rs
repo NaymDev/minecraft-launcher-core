@@ -22,13 +22,39 @@ impl ArgumentSubstitutorBuilder {
     self
   }
 
-  pub fn build(self) -> impl Fn(String) -> String {
-    move |input| {
-      let mut output = input;
-      for (key, value) in &self.map {
-        output = output.replace(&format!("${{{}}}", key), value);
-      }
-      output
+  pub fn build(self) -> ArgumentSubstitutor {
+    ArgumentSubstitutor::new(self.map)
+  }
+}
+
+pub struct ArgumentSubstitutor {
+  substitutions: HashMap<String, String>,
+}
+
+impl ArgumentSubstitutor {
+  pub fn new(substitutions: HashMap<String, String>) -> Self {
+    Self { substitutions }
+  }
+
+  pub fn substitute(&self, input: &str) -> String {
+    let mut output = input.to_string();
+    for (key, value) in &self.substitutions {
+      output = output.replace(&format!("${{{}}}", key), value);
     }
+    output
+  }
+
+  pub fn substitute_all(&self, input: Vec<&str>) -> Vec<String> {
+    let mut output = input
+      .iter()
+      .map(|s| s.to_string())
+      .collect::<Vec<_>>();
+
+    for (key, value) in &self.substitutions {
+      for input in &mut output {
+        *input = input.replace(&format!("${{{}}}", key), value);
+      }
+    }
+    output
   }
 }

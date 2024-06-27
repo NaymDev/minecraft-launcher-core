@@ -2,16 +2,16 @@ use std::{
   collections::HashMap,
   env::consts::ARCH,
   fs::{ self, create_dir_all, File },
-  io::{ self, Write },
+  io::{ self },
   path::{ Path, PathBuf, MAIN_SEPARATOR_STR },
   sync::Arc,
 };
 
-use argument_substitutor::ArgumentSubstitutorBuilder;
-use chrono::{ Utc, Timelike };
-use error::Error;
+use argument_substitutor::{ ArgumentSubstitutor, ArgumentSubstitutorBuilder };
+use chrono::Utc;
+use error::{ Error, UnpackAssetsError };
 use log::{ info, error, debug, warn };
-use options::{ GameOptions, ProxyOptions };
+use options::{ GameOptions, LauncherOptions, ProxyOptions };
 use os_info::Type::Windows;
 use process::{ GameProcess, GameProcessBuilder };
 use regex::Regex;
@@ -20,7 +20,14 @@ use zip::ZipArchive;
 
 use crate::{
   json::{
-    manifest::{ argument::ArgumentType, assets::AssetIndex, library::ExtractRules, rule::{ OperatingSystem, RuleFeatureType }, VersionManifest },
+    manifest::{
+      argument::ArgumentType,
+      assets::{ AssetIndex, AssetIndexInfo, AssetObject },
+      library::ExtractRules,
+      rule::{ OperatingSystem, RuleFeatureType },
+      VersionManifest,
+    },
+    EnvironmentFeatures,
     Sha1Sum,
     VersionInfo,
   },
@@ -41,36 +48,26 @@ const DEFAULT_JRE_ARGUMENTS_64BIT: &str =
 
 pub struct GameBootstrap {
   pub options: GameOptions,
-  local_version: Option<VersionManifest>,
+  env_features: EnvironmentFeatures,
+  version_manager: Option<VersionManager>,
 
-  natives_dir: Option<PathBuf>,
   virtual_dir: Option<PathBuf>,
 }
 
 impl GameBootstrap {
-  pub fn new(options: GameOptions) -> Self {
-    // let feature_matcher = Box::new(MinecraftFeatureMatcher(false, options.resolution.clone()));
-    // let version_manager = VersionManager::new(options.game_dir.clone(), options.env_features());
-
+  pub fn new(options: GameOptions, version_manager: Option<VersionManager>) -> Self {
+    let env_features = options.env_features();
     Self {
       options,
+      env_features,
+      version_manager,
 
-      local_version: None,
-      natives_dir: None,
       virtual_dir: None,
     }
   }
 
-  fn get_local_version(&self) -> &VersionManifest {
-    self.local_version.as_ref().unwrap()
-  }
-
   fn get_virtual_dir(&self) -> &PathBuf {
     self.virtual_dir.as_ref().unwrap()
-  }
-
-  fn get_natives_dir(&self) -> &PathBuf {
-    self.natives_dir.as_ref().unwrap()
   }
 
   fn get_version_dir(&self) -> PathBuf {
@@ -81,12 +78,12 @@ impl GameBootstrap {
     self.options.game_dir.join("assets")
   }
 
-  fn get_asset_index(&self) -> Option<AssetIndex> {
-    let asset_index_id = &self.get_local_version().asset_index.as_ref()?.id;
-    let asset_index_json_path = self.get_assets_dir().join("indexes").join(format!("{}.json", asset_index_id));
+  fn get_asset_index(&self, asset_index_info: &AssetIndexInfo) -> Result<AssetIndex, Box<dyn std::error::Error>> {
+    let index_id = &asset_index_info.id;
+    let index_file = self.get_assets_dir().join("indexes").join(format!("{}.json", index_id));
 
-    let file = &mut File::open(asset_index_json_path).ok()?;
-    serde_json::from_reader(file).ok()
+    let file = &mut File::open(index_file)?;
+    Ok(serde_json::from_reader(file)?)
   }
 
   fn is_win_ten(&self) -> bool {
@@ -123,35 +120,38 @@ impl GameBootstrap {
       self.progress_reporter()
     ).await?;
 
-    self.local_version = Some(local_version);
-    Ok(self.launch_game(version_manager).await?)
+    // self.local_version = Some(local_version);
+    Ok(self.launch_game().await?)
   }
 
-  async fn launch_game(&mut self, mut version_manager: VersionManager) -> Result<GameProcess, Error> {
+  pub async fn launch_game(&mut self) -> Result<GameProcess, Error> {
+    let game_dir = &self.options.game_dir;
+    let env_features = &self.env_features;
+
+    // Prepare version manager
+    let version_manager = {
+      if self.version_manager.is_none() {
+        self.version_manager.replace(VersionManager::new(game_dir.clone(), env_features.clone()).await?);
+      }
+      self.version_manager.as_mut().unwrap()
+    };
+
+    let local_version = version_manager.resolve_local_version(&self.options.version, false).await.map_err(Error::ResolveManifest)?;
     info!("Launching game");
 
-    let natives_dir = self.get_version_dir().join(format!("{}-natives-{}", self.options.version, Utc::now().nanosecond()));
-    if !natives_dir.is_dir() {
-      fs::create_dir_all(&natives_dir)?;
-    }
-
-    info!("Unpacking natives to {}", natives_dir.display());
-
-    if let Err(err) = self.unpack_natives(&natives_dir) {
+    // Prepare natives
+    if let Err(err) = self.unpack_natives(&local_version) {
       error!("Couldn't unpack natives! {err}");
       return Err(Error::UnpackNatives(Box::new(err)));
     }
 
-    let virtual_dir = self.reconstruct_assets();
-    if let Err(err) = virtual_dir {
-      error!("Couldn't unpack natives! {err}");
-      return Err(Error::UnpackNatives(err));
-    }
-    self.virtual_dir = virtual_dir.ok();
+    let virtual_dir = self.reconstruct_assets(&local_version).map_err(|err| {
+      error!("Couldn't unpack assets! {err}");
+      Error::UnpackAssets(err)
+    })?;
+    self.virtual_dir = Some(virtual_dir);
 
-    self.natives_dir = Some(natives_dir);
-
-    let game_dir = &self.options.game_dir;
+    // Prepare game directory
     info!("Launching in {}", game_dir.display());
     if !game_dir.exists() {
       if fs::create_dir_all(game_dir).is_err() {
@@ -163,6 +163,7 @@ impl GameBootstrap {
       return Err(Error::Launch("game directory is not actually a directory"));
     }
 
+    // Extra: Prepare server resource packs directory
     let server_resource_packs_dir = game_dir.join("server-resource-packs");
     create_dir_all(server_resource_packs_dir)?;
 
@@ -171,48 +172,48 @@ impl GameBootstrap {
     game_process_builder.directory(game_dir);
 
     if let Some(jvm_args) = &self.options.jvm_args {
-      game_process_builder.with_arguments(jvm_args.clone());
+      game_process_builder.with_arguments(jvm_args.iter().collect());
     } else {
       let args = if ARCH == "x86_64" { DEFAULT_JRE_ARGUMENTS_64BIT } else { DEFAULT_JRE_ARGUMENTS_32BIT };
-      game_process_builder.with_arguments(
-        args
-          .split(' ')
-          .map(|s| s.to_string())
-          .collect()
-      );
+      game_process_builder.with_arguments(args.split(' ').collect());
     }
 
-    let substitutor = self.create_arguments_substitutor();
+    let substitutor = self.create_arguments_substitutor(&local_version)?;
 
     // Add JVM args
-    let local_version = self.local_version.as_ref().unwrap();
     if !local_version.arguments.is_empty() {
-      if let Some(arguments) = local_version.arguments.get(&ArgumentType::Jvm) {
+      if let Some(jvm_arguments) = local_version.arguments.get(&ArgumentType::Jvm) {
         game_process_builder.with_arguments(
-          arguments
+          jvm_arguments
             .iter()
-            .filter_map(|v| v.apply(&self.options.env_features()))
+            .filter_map(|v| v.apply(env_features))
             .flatten()
-            .cloned()
-            .map(&substitutor)
-            .collect::<Vec<_>>()
+            .map(|arg| substitutor.substitute(arg))
+            .collect()
         );
       }
     } else if local_version.minecraft_arguments.is_some() {
+      // Manifest uses old format
       if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
         game_process_builder.with_argument("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump");
         if self.is_win_ten() {
           game_process_builder.with_arguments(vec!["-Dos.name=Windows 10", "-Dos.version=10.0"]);
         }
       } else if OperatingSystem::get_current_platform() == OperatingSystem::Osx {
-        game_process_builder.with_arguments(vec![&substitutor("-Xdock:icon=${asset=icons/minecraft.icns}".to_string()), "-Xdock:name=Minecraft"]);
+        game_process_builder.with_arguments(substitutor.substitute_all(vec!["-Xdock:icon=${asset=icons/minecraft.icns}", "-Xdock:name=Minecraft"]));
       }
 
-      game_process_builder.with_argument(&substitutor("-Djava.library.path=${natives_directory}".to_string()));
-      game_process_builder.with_argument(&substitutor("-Dminecraft.launcher.brand=${launcher_name}".to_string()));
-      game_process_builder.with_argument(&substitutor("-Dminecraft.launcher.version=${launcher_version}".to_string()));
-      game_process_builder.with_argument(&substitutor("-Dminecraft.client.jar=${primary_jar}".to_string()));
-      game_process_builder.with_arguments(vec!["-cp".to_string(), substitutor("${classpath}".to_string())]);
+      game_process_builder.with_arguments(
+        substitutor.substitute_all(
+          vec![
+            "-Djava.library.path=${natives_directory}",
+            "-Dminecraft.launcher.brand=${launcher_name}",
+            "-Dminecraft.launcher.version=${launcher_version}",
+            "-Dminecraft.client.jar=${primary_jar}",
+            "-cp ${classpath}"
+          ]
+        )
+      );
     }
 
     game_process_builder.with_argument(local_version.get_main_class());
@@ -222,36 +223,27 @@ impl GameBootstrap {
         game_process_builder.with_arguments(
           arguments
             .iter()
-            .filter_map(|v| v.apply(&self.options.env_features()))
+            .filter_map(|v| v.apply(env_features))
             .flatten()
-            .cloned()
-            .map(&substitutor)
-            .collect::<Vec<_>>()
+            .map(|arg| substitutor.substitute(arg))
+            .collect()
         );
       }
     } else if let Some(minecraft_arguments) = &local_version.minecraft_arguments {
       game_process_builder.with_arguments(
         minecraft_arguments
           .split(' ')
-          .map(|s| s.to_string())
-          .map(&substitutor)
-          .collect::<Vec<_>>()
+          .map(|arg| substitutor.substitute(arg))
+          .collect()
       );
 
-      let env_features = &self.options.env_features();
       if env_features.has_feature(&RuleFeatureType::IsDemoUser, &json!(true)) {
         game_process_builder.with_argument("--demo");
       }
 
       if env_features.has_feature(&RuleFeatureType::HasCustomResolution, &json!(true)) {
-        game_process_builder.with_arguments(
-          vec![
-            "--width".to_string(),
-            substitutor("${resolution_width}".to_string()),
-            "--height".to_string(),
-            substitutor("${resolution_height}".to_string())
-          ]
-        );
+        game_process_builder.with_arguments(vec!["--width", &substitutor.substitute("${resolution_width}")]);
+        game_process_builder.with_arguments(vec!["--height", &substitutor.substitute("${resolution_height}")]);
       }
     }
 
@@ -267,27 +259,24 @@ impl GameBootstrap {
       }
     }
 
+    // Print args for debug purposes
     {
       // Remove token from args
-      let mut args = game_process_builder.get_args().join(" ");
+      let args_vec = game_process_builder.get_args();
+      let mut args = args_vec.join(" ");
       if let Some(token) = &self.options.authentication.access_token {
         args = args.replace(token, "?????");
       }
       debug!("Running {} {}", &self.options.java_path.display(), args);
+
+      let regex = Regex::new(r"\$\{.+\}")?;
+      args_vec
+        .iter()
+        .filter_map(|arg| regex.find(arg))
+        .for_each(|arg| debug!("Unresolved variable - {:?}", arg.as_str()));
     }
 
-    let regex = Regex::new(r"\$\{.+\}")?;
-    game_process_builder
-      .get_args()
-      .iter()
-      .filter_map(|arg| regex.find(arg))
-      .for_each(|arg| debug!("Unresolved variable - {:?}", arg.as_str()));
-
-    let process = game_process_builder.spawn();
-
-    self.perform_cleanups(&mut version_manager)?;
-
-    process.map_err(Error::Game)
+    game_process_builder.spawn()
   }
 
   fn perform_cleanups(&self, version_manager: &mut VersionManager) -> Result<(), Error> {
@@ -330,9 +319,13 @@ impl GameBootstrap {
     Ok(())
   }
 
-  fn unpack_natives(&self, natives_dir: &Path) -> Result<(), Error> {
+  fn unpack_natives(&self, manifest: &VersionManifest) -> Result<(), Error> {
     let os = OperatingSystem::get_current_platform();
-    let libs = self.local_version.as_ref().unwrap().get_relevant_libraries(&self.options.env_features());
+    let natives_dir = &self.options.natives_dir;
+    info!("Unpacking natives to {}", natives_dir.display());
+    fs::create_dir_all(natives_dir).map_err(|err| Error::UnpackNatives(Box::new(err)))?;
+
+    let libs = manifest.get_relevant_libraries(&self.options.env_features());
 
     fn unpack_native(natives_dir: &Path, mut zip_archive: ZipArchive<File>, extract_rules: Option<&ExtractRules>) -> Result<(), Error> {
       for i in 0..zip_archive.len() {
@@ -370,19 +363,45 @@ impl GameBootstrap {
     Ok(())
   }
 
-  fn reconstruct_assets(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let assets_dir = self.options.game_dir.join("assets"); //self.assets_dir;
+  /// Reconstructs the assets based on the provided version manifest.
+  ///
+  /// This function attempts to reconstruct the assets by reading the asset index
+  /// from the version manifest and copying the necessary files from the `objects` directory
+  /// to either a `virtual` directory or directly to the `resources` directory if specified by
+  /// the asset index.
+  /// If no asset index file is found in the assets directory, it will silently fail.
+  ///
+  /// # Arguments
+  /// * `version_manifest` - A reference to the `VersionManifest` which contains information
+  ///   about the asset index and other version details.
+  ///
+  /// # Returns
+  /// A `Result` which is:
+  /// - `Ok(PathBuf)` containing the path to the reconstructed assets directory.
+  /// - `Err(UnpackAssetsError)` describing the error encountered during the operation.
+  ///
+  /// # Errors
+  /// This function can return an `UnpackAssetsError` in several cases, including:
+  /// - No asset index is found in the provided manifest (`NoAssetIndex`).
+  /// - Failure to open or parse the asset index file (`OpenAssetIndex`, `ParseAssetIndex`).
+  /// - Errors reading asset objects or unpacking them into the target directory (`ReadAssetObject`, `UnpackAssetObject`).
+  fn reconstruct_assets(&self, version_manifest: &VersionManifest) -> Result<PathBuf, UnpackAssetsError> {
+    let asset_index_info = version_manifest.asset_index.as_ref().ok_or(UnpackAssetsError::NoAssetIndex)?;
+
+    let assets_dir = self.options.game_dir.join("assets");
     let indexes_dir = assets_dir.join("indexes");
     let objects_dir = assets_dir.join("objects");
-    let asset_index_id = &self.get_local_version().asset_index.as_ref().unwrap().id;
+
+    let asset_index_id = &asset_index_info.id;
     let asset_index_file = indexes_dir.join(format!("{}.json", asset_index_id));
     let mut virtual_dir = assets_dir.join("virtual").join(asset_index_id);
 
+    // Open asset index file
     if !asset_index_file.is_file() {
       warn!("No assets index file {}; can't reconstruct assets", virtual_dir.display());
-      return Ok(virtual_dir);
+      return Ok(virtual_dir); // Should throw also?
     } else {
-      let asset_index: AssetIndex = serde_json::from_reader(File::open(asset_index_file)?)?;
+      let asset_index = self.get_asset_index(asset_index_info).map_err(UnpackAssetsError::ParseAssetIndex)?;
       if asset_index.map_to_resources {
         virtual_dir = self.options.game_dir.join("resources");
       }
@@ -390,65 +409,63 @@ impl GameBootstrap {
       if asset_index.is_virtual || asset_index.map_to_resources {
         info!("Reconstructing virtual assets folder at {}", virtual_dir.display());
 
-        for asset_obj_entry in asset_index.get_file_map() {
-          let asset_file = virtual_dir.join(asset_obj_entry.0);
-          let object_file = objects_dir.join(&asset_obj_entry.1.hash.to_string()[0..2]).join(asset_obj_entry.1.hash.to_string());
+        for (asset_file_name, AssetObject { hash: asset_hash, .. }) in asset_index.get_file_map() {
+          let asset_hash_string = asset_hash.to_string();
+          let asset_file = virtual_dir.join(asset_file_name);
+          let object_file = objects_dir.join(&asset_hash_string[0..2]).join(asset_hash_string);
 
           let mut should_copy = true;
           if asset_file.is_file() {
-            let hash = Sha1Sum::from_reader(&mut File::open(&asset_file)?)?;
-            if hash != asset_obj_entry.1.hash {
+            let mut file = File::open(&asset_file).map_err(UnpackAssetsError::ReadAssetObject)?;
+            let hash = Sha1Sum::from_reader(&mut file)?;
+            if hash != *asset_hash {
               should_copy = true;
             }
           }
 
           if should_copy {
             info!("Copying asset for virtual or resource-mapped: {}", asset_file.display());
-            fs::copy(object_file, asset_file)?;
+            fs::copy(object_file, asset_file).map_err(UnpackAssetsError::UnpackAssetObject)?;
           }
         }
 
-        let mut last_used_file = File::create(virtual_dir.join(".lastused"))?;
-        last_used_file.write_all(Utc::now().to_rfc3339().as_bytes())?;
+        let _ = fs::write(virtual_dir.join(".lastused"), Utc::now().to_rfc3339().as_bytes());
       }
     }
 
     Ok(virtual_dir)
   }
 
-  fn create_arguments_substitutor(&self) -> impl Fn(String) -> String {
+  fn create_arguments_substitutor(&self, manifest: &VersionManifest) -> Result<ArgumentSubstitutor, Error> {
     let mut substitutor = ArgumentSubstitutorBuilder::new();
 
     let classpath_separator = if OperatingSystem::get_current_platform() == OperatingSystem::Windows { ";" } else { ":" };
     let version_id = self.options.version.to_string();
-    let local_version = self.get_local_version();
     let game_dir = &self.options.game_dir;
 
-    let classpath = self.construct_classpath(self.local_version.as_ref().unwrap()).unwrap();
+    let classpath = self.construct_classpath(manifest)?;
     let assets_dir = self.get_assets_dir();
     let libraries_dir = game_dir.join("libraries");
-    let natives_dir = self.get_natives_dir();
+    let natives_dir = &self.options.natives_dir;
     let virtual_dir = self.get_virtual_dir();
 
     let launcher_opts = self.options.launcher_options.as_ref();
 
-    let jar_id = local_version.get_jar().to_string();
+    let jar_id = manifest.get_jar().to_string();
     let jar_path = game_dir.join("versions").join(&jar_id).join(format!("{}.jar", &jar_id));
 
     let asset_index_substitutions = {
       let mut map = HashMap::new();
+      let asset_index_info = manifest.asset_index.as_ref();
 
-      if let Some(asset_index) = self.get_asset_index() {
-        for (asset_name, asset) in asset_index.get_file_map() {
-          let hash = asset.hash.to_string();
-          let asset_path = assets_dir
-            .join("objects")
-            .join(&hash[0..2])
-            .join(hash)
-            .to_str()
-            .unwrap()
-            .to_string();
-          map.insert(format!("asset={asset_name}"), asset_path);
+      if let Some(asset_index) = asset_index_info.and_then(|info| self.get_asset_index(info).ok()) {
+        let objects_dir = assets_dir.join("objects");
+        for (asset_name, AssetObject { hash, .. }) in asset_index.get_file_map() {
+          let hash = hash.to_string();
+          let asset_path = objects_dir.join(&hash[0..2]).join(hash);
+          if let Some(asset_path) = asset_path.to_str() {
+            map.insert(format!("asset={asset_name}"), asset_path.to_string());
+          }
         }
       }
 
@@ -467,15 +484,16 @@ impl GameBootstrap {
     substitutor
       .add("profile_name", "")
       .add("version_name", &version_id)
+      // TODO: avoid unwraps
       .add("game_directory", game_dir.to_str().unwrap())
       .add("game_assets", virtual_dir.to_str().unwrap())
       .add("assets_root", assets_dir.to_str().unwrap())
-      .add("assets_index_name", &local_version.asset_index.as_ref().unwrap().id)
-      .add("version_type", local_version.get_type().get_name());
+      .add("assets_index_name", &manifest.asset_index.as_ref().unwrap().id)
+      .add("version_type", manifest.get_type().get_name());
 
-    if let Some(resolution) = self.options.resolution.as_ref() {
-      substitutor.add("resolution_width", &resolution.width().to_string());
-      substitutor.add("resolution_height", &resolution.height().to_string());
+    if let Some(resolution) = &self.options.resolution {
+      substitutor.add("resolution_width", resolution.width().to_string());
+      substitutor.add("resolution_height", resolution.height().to_string());
     } else {
       substitutor.add("resolution_width", "");
       substitutor.add("resolution_height", "");
@@ -483,8 +501,9 @@ impl GameBootstrap {
 
     substitutor.add("language", "en-us").add_all(asset_index_substitutions);
 
-    if let Some(launcher_opts) = launcher_opts {
-      substitutor.add("launcher_name", &launcher_opts.launcher_name).add("launcher_version", &launcher_opts.launcher_version);
+    if let Some(LauncherOptions { launcher_name, launcher_version }) = launcher_opts {
+      substitutor.add("launcher_name", launcher_name);
+      substitutor.add("launcher_version", launcher_version);
     } else {
       substitutor.add("launcher_name", "").add("launcher_version", "");
     }
@@ -504,24 +523,25 @@ impl GameBootstrap {
     // substitutor.add_all(self.options.authentication.get_extra_substitutors());
     substitutor.add_all(self.options.substitutor_overrides.clone()); // Override if needed
 
-    substitutor.build()
+    Ok(substitutor.build())
   }
 
   fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, Error> {
     let os = OperatingSystem::get_current_platform();
     let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
     let classpath = local_version.get_classpath(&os, &self.options.game_dir, &self.options.env_features());
+
+    let mut vec = vec![];
     for path in &classpath {
       if !path.is_file() {
         return Err(Error::ClasspathFileNotFound(path.to_path_buf()));
       }
+      if let Some(path) = path.to_str() {
+        vec.push(path.to_string());
+      } else {
+        return Err(Error::InvalidClasspathPath(path.to_path_buf()));
+      }
     }
-    Ok(
-      classpath
-        .iter()
-        .map(|s| s.to_str().unwrap().to_string())
-        .collect::<Vec<_>>()
-        .join(separator)
-    )
+    Ok(vec.join(separator))
   }
 }

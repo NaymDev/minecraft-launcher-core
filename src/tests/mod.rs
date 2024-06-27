@@ -2,10 +2,11 @@ use crate::{
   bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
   json::MCVersion,
   progress_reporter::{ ProgressReporter, ProgressUpdate },
+  version_manager::VersionManager,
 };
 
 use std::{ env::temp_dir, path::PathBuf, sync::{ Mutex, Arc } };
-use chrono::Utc;
+use chrono::{ Timelike, Utc };
 use log::{ debug, info, trace, LevelFilter };
 use log4rs::{
   config::{ Appender, Root, Logger },
@@ -126,17 +127,45 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
   };
 
   let java_path = PathBuf::from(env!("JAVA_HOME")).join("bin").join("java.exe");
+  let reporter = Arc::new(reporter);
+  let mc_version = MCVersion::new("1.20.1");
+
+  let natives_dir = game_dir.join("versions").join(mc_version.to_string()).join(format!("{}-natives-{}", mc_version, Utc::now().nanosecond()));
   let game_options = GameOptionsBuilder::default()
-    .version(MCVersion::new("1.20.1"))
+    .version(mc_version.clone())
     .game_dir(game_dir)
+    .natives_dir(natives_dir)
     .proxy(ProxyOptions::NoProxy)
     .java_path(java_path)
     .authentication(UserAuthentication::offline("MonkeyKiller_"))
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
-    .progress_reporter(reporter)
+    .progress_reporter_arc(&reporter)
+    .max_concurrent_downloads(32)
     .build()?;
-  let mut game_runner = GameBootstrap::new(game_options);
-  let mut process = game_runner.launch().await?;
+
+  reporter.set("Fetching version manifest", 0, 2);
+  let env_features = game_options.env_features();
+  let mut version_manager = VersionManager::new(game_options.game_dir.clone(), env_features.clone()).await?;
+
+  info!("Queuing library & version downloads");
+  reporter.set_status("Resolving local version").set_progress(1);
+  let local_version = version_manager.resolve_local_version(&game_options.version, true).await?;
+  if !local_version.applies_to_current_environment(&env_features) {
+    return Err(format!("Version {} is is incompatible with the current environment", game_options.version).into());
+  }
+
+  reporter.clear();
+  version_manager.download_required_files(
+    &local_version,
+    game_options.max_concurrent_downloads,
+    game_options.max_download_attempts,
+    &reporter
+  ).await?;
+
+  let _ = version_manager.resolve_local_version(&game_options.version, true).await?;
+
+  let mut game_runner = GameBootstrap::new(game_options, Some(version_manager));
+  let mut process = game_runner.launch_game().await?;
   let status = loop {
     if let Some(status) = process.exit_status() {
       break status;

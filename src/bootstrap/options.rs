@@ -66,6 +66,7 @@ impl ProxyOptions {
 pub struct GameOptions {
   pub version: MCVersion,
   pub game_dir: PathBuf,
+  pub natives_dir: PathBuf,
   #[builder(default)]
   pub proxy: ProxyOptions,
   #[builder(default)]

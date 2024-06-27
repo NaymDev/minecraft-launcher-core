@@ -2,6 +2,8 @@ use std::{ io::BufReader, os::windows::process::CommandExt, path::{ Path, PathBu
 
 use crate::json::manifest::rule::OperatingSystem;
 
+use super::error::Error;
+
 pub struct GameProcess {
   child: Child,
   stdout: BufReader<ChildStdout>,
@@ -82,9 +84,9 @@ impl GameProcessBuilder {
     self
   }
 
-  pub fn spawn(self) -> Result<GameProcess, Box<dyn std::error::Error>> {
-    let java_path = self.java_path.as_ref().ok_or("Java path not set")?;
-    let directory = self.directory.as_ref().ok_or("Game directory not set")?;
+  pub fn spawn(self) -> Result<GameProcess, Error> {
+    let java_path = self.java_path.as_ref().ok_or(Error::Game("Java path not set".into()))?;
+    let directory = self.directory.as_ref().ok_or(Error::Game("Game directory not set".into()))?;
     let mut args = self.get_args();
     if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
       args = args
