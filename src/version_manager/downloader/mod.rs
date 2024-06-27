@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use download_job::DownloadJob;
+use progress_reporter::ProgressReporter;
 use utils::{ get_jar_downloadable, get_library_downloadables, get_asset_downloadables };
 
-use crate::{ json::manifest::VersionManifest, progress_reporter::ProgressReporter };
+use crate::json::manifest::VersionManifest;
 
 use super::VersionManager;
 
+pub mod progress_reporter;
 pub mod download_job;
 pub mod downloadables;
 pub mod utils;

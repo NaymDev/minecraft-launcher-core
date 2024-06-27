@@ -1,8 +1,7 @@
 use crate::{
   bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
   json::MCVersion,
-  progress_reporter::{ ProgressReporter, ProgressUpdate },
-  version_manager::VersionManager,
+  version_manager::{ downloader::progress_reporter::{ ProgressReporter, ProgressUpdate }, VersionManager },
 };
 
 use std::{ env::temp_dir, path::PathBuf, sync::{ Mutex, Arc } };

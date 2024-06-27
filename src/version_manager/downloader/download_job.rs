@@ -5,9 +5,7 @@ use futures::{ stream::iter, StreamExt };
 use log::{ info, error, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy };
 
-use crate::progress_reporter::ProgressReporter;
-
-use super::{ downloadables::Downloadable, error::Error };
+use super::{ downloadables::Downloadable, error::Error, progress_reporter::ProgressReporter };
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 

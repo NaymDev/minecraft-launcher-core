@@ -1,7 +1,6 @@
-pub mod version_manager;
-pub mod progress_reporter;
-
 pub mod json;
+
+pub mod version_manager;
 pub mod bootstrap;
 
 #[cfg(test)]

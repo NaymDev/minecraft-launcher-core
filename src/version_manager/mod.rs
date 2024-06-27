@@ -1,15 +1,12 @@
 use std::{ collections::{ HashMap, HashSet }, fs::{ create_dir_all, read_dir, File }, path::PathBuf, sync::Arc };
 
-use downloader::ClientDownloader;
+use downloader::{ progress_reporter::ProgressReporter, ClientDownloader };
 use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
 use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
 use utils::resolve;
 
-use crate::{
-  json::{ manifest::{ rule::OperatingSystem, VersionManifest }, EnvironmentFeatures, MCVersion, VersionInfo },
-  progress_reporter::ProgressReporter,
-};
+use crate::json::{ manifest::{ rule::OperatingSystem, VersionManifest }, EnvironmentFeatures, MCVersion, VersionInfo };
 
 pub mod downloader;
 pub mod remote;

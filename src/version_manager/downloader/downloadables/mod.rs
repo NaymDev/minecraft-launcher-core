@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use log::info;
 use reqwest::Client;
 
-use crate::progress_reporter::ProgressReporter;
-
-use super::error::Error;
+use super::{ error::Error, progress_reporter::ProgressReporter };
 
 mod checksummed;
 mod prehashed;
