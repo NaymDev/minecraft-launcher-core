@@ -1,6 +1,7 @@
 use std::{ path::PathBuf, time::SystemTimeError };
 
 use thiserror::Error;
+use zip::result::ZipError;
 
 use crate::{ json::Sha1SumError, version_manager::error::{ LoadVersionError, ResolveManifestError } };
 
@@ -9,7 +10,7 @@ pub enum Error {
   #[error(transparent)] IO(#[from] std::io::Error),
   #[error("Couldn't load version! {0}")] LoadVersion(#[from] LoadVersionError),
   #[error("Couldn't resolve version! {0}")] ResolveManifest(#[from] ResolveManifestError), // TODO: Make proper error type
-  #[error("Couldn't unpack natives! {0}")] UnpackNatives(Box<dyn std::error::Error>), // TODO: Make proper error type
+  #[error("Couldn't unpack natives! {0}")] UnpackNatives(UnpackNativesError),
   #[error("Couldn't unpack assets! {0}")] UnpackAssets(UnpackAssetsError),
   #[error("Aborting launch; {0}")] Launch(&'static str),
   #[error("Failed to launch game")] Game(Box<dyn std::error::Error>),
@@ -18,6 +19,14 @@ pub enum Error {
   #[error(transparent)] Zip(#[from] zip::result::ZipError),
   #[error("Classpath file not found: {0}")] ClasspathFileNotFound(PathBuf),
   #[error("Invalid classpath path: {0}")] InvalidClasspathPath(PathBuf),
+}
+
+#[derive(Debug, Error)]
+pub enum UnpackNativesError {
+  #[error("Failed to create natives folder: {0}")] CreateNativesFolder(std::io::Error),
+  #[error("Failed to read native: {0}")] ReadNative(std::io::Error),
+  #[error("Failed to unzip native: {0}")] UnzipNative(#[from] ZipError),
+  #[error("Failed to unpack native: {0}")] UnpackNative(std::io::Error),
 }
 
 #[derive(Debug, Error)]

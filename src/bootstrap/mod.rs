@@ -2,7 +2,7 @@ use std::{ collections::HashMap, env::consts::ARCH, fs::{ self, create_dir_all, 
 
 use argument_substitutor::{ ArgumentSubstitutor, ArgumentSubstitutorBuilder };
 use chrono::Utc;
-use error::{ Error, UnpackAssetsError };
+use error::{ Error, UnpackAssetsError, UnpackNativesError };
 use log::{ info, error, debug, warn };
 use options::{ GameOptions, LauncherOptions, ProxyOptions };
 use os_info::Type::Windows;
@@ -99,7 +99,7 @@ impl GameBootstrap {
     // Prepare natives
     if let Err(err) = self.unpack_natives(&local_version) {
       error!("Couldn't unpack natives! {err}");
-      return Err(Error::UnpackNatives(Box::new(err)));
+      return Err(Error::UnpackNatives(err));
     }
 
     let virtual_dir = self.reconstruct_assets(&local_version).map_err(|err| {
@@ -236,17 +236,17 @@ impl GameBootstrap {
     game_process_builder.spawn()
   }
 
-  fn unpack_natives(&self, manifest: &VersionManifest) -> Result<(), Error> {
+  fn unpack_natives(&self, manifest: &VersionManifest) -> Result<(), UnpackNativesError> {
     let os = OperatingSystem::get_current_platform();
     let natives_dir = &self.options.natives_dir;
     info!("Unpacking natives to {}", natives_dir.display());
-    fs::create_dir_all(natives_dir).map_err(|err| Error::UnpackNatives(Box::new(err)))?;
+    fs::create_dir_all(natives_dir).map_err(UnpackNativesError::CreateNativesFolder)?;
 
     let libs = manifest.get_relevant_libraries(&self.options.env_features());
 
-    fn unpack_native(natives_dir: &Path, mut zip_archive: ZipArchive<File>, extract_rules: Option<&ExtractRules>) -> Result<(), Error> {
+    fn unpack_native(natives_dir: &Path, mut zip_archive: ZipArchive<File>, extract_rules: Option<&ExtractRules>) -> Result<(), UnpackNativesError> {
       for i in 0..zip_archive.len() {
-        let mut file = zip_archive.by_index(i).unwrap();
+        let mut file = zip_archive.by_index(i)?;
         let file_zip_path = file.enclosed_name().unwrap().to_owned();
         if let Some(extract_rules) = extract_rules {
           if !extract_rules.should_extract(&file_zip_path) {
@@ -255,13 +255,13 @@ impl GameBootstrap {
         }
 
         let output_file = natives_dir.join(file_zip_path);
-        create_dir_all(output_file.parent().unwrap())?;
-        if file.is_dir() {
-          continue;
+        if let Some(parent) = output_file.parent() {
+          create_dir_all(parent).map_err(UnpackNativesError::UnpackNative)?;
         }
-
-        let mut output_file = File::create(output_file)?;
-        io::copy(&mut file, &mut output_file)?;
+        if !file.is_dir() {
+          let mut output_file = File::create(output_file).map_err(UnpackNativesError::UnpackNative)?;
+          io::copy(&mut file, &mut output_file).map_err(UnpackNativesError::UnpackNative)?;
+        }
       }
       Ok(())
     }
@@ -270,8 +270,8 @@ impl GameBootstrap {
       let natives = &lib.natives;
       if let Some(native_id) = natives.get(&os) {
         let file = &self.options.game_dir.join("libraries").join(lib.get_artifact_path(Some(native_id)).replace('/', MAIN_SEPARATOR_STR));
-
-        let zip_file = ZipArchive::new(File::open(file)?)?;
+        let file = File::open(file).map_err(UnpackNativesError::ReadNative)?;
+        let zip_file = ZipArchive::new(file)?;
         let extract_rules = lib.extract.as_ref();
         let _ = unpack_native(natives_dir, zip_file, extract_rules); // Ignore errors
       }
