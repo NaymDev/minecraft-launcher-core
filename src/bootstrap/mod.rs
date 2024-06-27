@@ -42,8 +42,6 @@ pub struct GameBootstrap {
   pub options: GameOptions,
   env_features: EnvironmentFeatures,
   version_manager: Option<VersionManager>,
-
-  virtual_dir: Option<PathBuf>,
 }
 
 impl GameBootstrap {
@@ -53,25 +51,11 @@ impl GameBootstrap {
       options,
       env_features,
       version_manager,
-
-      virtual_dir: None,
     }
-  }
-
-  fn get_virtual_dir(&self) -> &PathBuf {
-    self.virtual_dir.as_ref().unwrap()
   }
 
   fn get_assets_dir(&self) -> PathBuf {
     self.options.game_dir.join("assets")
-  }
-
-  fn get_asset_index(&self, asset_index_info: &AssetIndexInfo) -> Result<AssetIndex, Box<dyn std::error::Error>> {
-    let index_id = &asset_index_info.id;
-    let index_file = self.get_assets_dir().join("indexes").join(format!("{}.json", index_id));
-
-    let file = &mut File::open(index_file)?;
-    Ok(serde_json::from_reader(file)?)
   }
 
   fn is_win_ten(&self) -> bool {
@@ -93,25 +77,24 @@ impl GameBootstrap {
       self.version_manager.as_mut().unwrap()
     };
 
-    let local_version = version_manager.resolve_local_version(&self.options.version, false, false).await?;
+    let manifest = version_manager.resolve_local_version(&self.options.version, false, false).await?;
     info!("Launching game");
 
     // Prepare natives
-    if let Err(err) = self.unpack_natives(&local_version) {
+    if let Err(err) = self.unpack_natives(&manifest) {
       error!("Couldn't unpack natives! {err}");
       return Err(Error::UnpackNatives(err));
     }
 
-    let virtual_dir = self.reconstruct_assets(&local_version).map_err(|err| {
+    let game_assets_dir = self.reconstruct_assets(&manifest).map_err(|err| {
       error!("Couldn't unpack assets! {err}");
       Error::UnpackAssets(err)
     })?;
-    self.virtual_dir = Some(virtual_dir);
 
     // Prepare game directory
     info!("Launching in {}", game_dir.display());
     if !game_dir.exists() {
-      if fs::create_dir_all(game_dir).is_err() {
+      if create_dir_all(game_dir).is_err() {
         error!("Aborting launch; couldn't create game directory");
         return Err(Error::Launch("couldn't create game directory"));
       }
@@ -135,11 +118,11 @@ impl GameBootstrap {
       game_process_builder.with_arguments(args.split(' ').collect());
     }
 
-    let substitutor = self.create_arguments_substitutor(&local_version)?;
+    let substitutor = self.create_arguments_substitutor(&manifest, &game_assets_dir)?;
 
     // Add JVM args
-    if !local_version.arguments.is_empty() {
-      if let Some(jvm_arguments) = local_version.arguments.get(&ArgumentType::Jvm) {
+    if !manifest.arguments.is_empty() {
+      if let Some(jvm_arguments) = manifest.arguments.get(&ArgumentType::Jvm) {
         game_process_builder.with_arguments(
           jvm_arguments
             .iter()
@@ -149,7 +132,7 @@ impl GameBootstrap {
             .collect()
         );
       }
-    } else if local_version.minecraft_arguments.is_some() {
+    } else if manifest.minecraft_arguments.is_some() {
       // Manifest uses old format
       if OperatingSystem::get_current_platform() == OperatingSystem::Windows {
         game_process_builder.with_argument("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump");
@@ -173,10 +156,10 @@ impl GameBootstrap {
       );
     }
 
-    game_process_builder.with_argument(local_version.get_main_class());
+    game_process_builder.with_argument(manifest.get_main_class());
     info!("Half command: {}", game_process_builder.get_args().join(" "));
-    if !local_version.arguments.is_empty() {
-      if let Some(arguments) = local_version.arguments.get(&ArgumentType::Game) {
+    if !manifest.arguments.is_empty() {
+      if let Some(arguments) = manifest.arguments.get(&ArgumentType::Game) {
         game_process_builder.with_arguments(
           arguments
             .iter()
@@ -186,7 +169,7 @@ impl GameBootstrap {
             .collect()
         );
       }
-    } else if let Some(minecraft_arguments) = &local_version.minecraft_arguments {
+    } else if let Some(minecraft_arguments) = &manifest.minecraft_arguments {
       game_process_builder.with_arguments(
         minecraft_arguments
           .split(' ')
@@ -240,9 +223,9 @@ impl GameBootstrap {
     let os = OperatingSystem::get_current_platform();
     let natives_dir = &self.options.natives_dir;
     info!("Unpacking natives to {}", natives_dir.display());
-    fs::create_dir_all(natives_dir).map_err(UnpackNativesError::CreateNativesFolder)?;
+    create_dir_all(natives_dir).map_err(UnpackNativesError::CreateNativesFolder)?;
 
-    let libs = manifest.get_relevant_libraries(&self.options.env_features());
+    let libs = manifest.get_relevant_libraries(&self.env_features);
 
     fn unpack_native(natives_dir: &Path, mut zip_archive: ZipArchive<File>, extract_rules: Option<&ExtractRules>) -> Result<(), UnpackNativesError> {
       for i in 0..zip_archive.len() {
@@ -353,7 +336,7 @@ impl GameBootstrap {
     Ok(virtual_dir)
   }
 
-  fn create_arguments_substitutor(&self, manifest: &VersionManifest) -> Result<ArgumentSubstitutor, Error> {
+  fn create_arguments_substitutor(&self, manifest: &VersionManifest, game_assets_dir: &Path) -> Result<ArgumentSubstitutor, Error> {
     let mut substitutor = ArgumentSubstitutorBuilder::new();
 
     let classpath_separator = if OperatingSystem::get_current_platform() == OperatingSystem::Windows { ";" } else { ":" };
@@ -364,7 +347,6 @@ impl GameBootstrap {
     let assets_dir = self.get_assets_dir();
     let libraries_dir = game_dir.join("libraries");
     let natives_dir = &self.options.natives_dir;
-    let virtual_dir = self.get_virtual_dir();
 
     let launcher_opts = self.options.launcher_options.as_ref();
 
@@ -403,7 +385,7 @@ impl GameBootstrap {
       .add("version_name", &version_id)
       // TODO: avoid unwraps
       .add("game_directory", game_dir.to_str().unwrap())
-      .add("game_assets", virtual_dir.to_str().unwrap())
+      .add("game_assets", game_assets_dir.to_str().unwrap())
       .add("assets_root", assets_dir.to_str().unwrap())
       .add("assets_index_name", &manifest.asset_index.as_ref().unwrap().id)
       .add("version_type", manifest.get_type().get_name());
@@ -446,7 +428,7 @@ impl GameBootstrap {
   fn construct_classpath(&self, local_version: &VersionManifest) -> Result<String, Error> {
     let os = OperatingSystem::get_current_platform();
     let separator = if os == OperatingSystem::Windows { ";" } else { ":" };
-    let classpath = local_version.get_classpath(&os, &self.options.game_dir, &self.options.env_features());
+    let classpath = local_version.get_classpath(&os, &self.options.game_dir, &self.env_features);
 
     let mut vec = vec![];
     for path in &classpath {
@@ -460,5 +442,13 @@ impl GameBootstrap {
       }
     }
     Ok(vec.join(separator))
+  }
+
+  fn get_asset_index(&self, asset_index_info: &AssetIndexInfo) -> Result<AssetIndex, Box<dyn std::error::Error>> {
+    let index_id = &asset_index_info.id;
+    let index_file = self.get_assets_dir().join("indexes").join(format!("{}.json", index_id));
+
+    let file = &mut File::open(index_file)?;
+    Ok(serde_json::from_reader(file)?)
   }
 }
