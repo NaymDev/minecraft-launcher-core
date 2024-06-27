@@ -81,6 +81,9 @@ pub struct GameOptions {
   #[builder(default)]
   pub jvm_args: Option<Vec<String>>,
 
+  #[builder(default)]
+  pub version_name: Option<String>,
+
   #[builder(default = "16")]
   pub max_concurrent_downloads: u16,
   #[builder(default = "5")]

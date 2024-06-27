@@ -329,6 +329,7 @@ impl GameBootstrap {
 
     let classpath_separator = if OperatingSystem::get_current_platform() == OperatingSystem::Windows { ";" } else { ":" };
     let version_id = manifest.id.to_string();
+    let version_name = self.options.version_name.as_ref().unwrap_or(&version_id);
     let game_dir = &self.options.game_dir;
 
     let classpath = self.construct_classpath(manifest)?;
@@ -369,7 +370,7 @@ impl GameBootstrap {
 
     substitutor
       .add("profile_name", "")
-      .add("version_name", &version_id)
+      .add("version_name", version_name)
       .add("game_directory", game_dir.to_str().unwrap_or_default())
       .add("game_assets", game_assets_dir.to_str().unwrap_or_default())
       .add("assets_root", assets_dir.to_str().unwrap_or_default())
