@@ -93,7 +93,7 @@ impl GameBootstrap {
       self.version_manager.as_mut().unwrap()
     };
 
-    let local_version = version_manager.resolve_local_version(&self.options.version, false).await.map_err(Error::ResolveManifest)?;
+    let local_version = version_manager.resolve_local_version(&self.options.version, false).await?;
     info!("Launching game");
 
     // Prepare natives

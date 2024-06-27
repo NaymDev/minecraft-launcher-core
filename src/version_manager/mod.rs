@@ -156,11 +156,7 @@ impl VersionManager {
   /// let version_id = MCVersion::new("1.16.4");
   /// let manifest = resolver.resolve(&version_id, true).await?;
   /// ```
-  pub async fn resolve_local_version(
-    &mut self,
-    version_id: &MCVersion,
-    update_if_necessary: bool
-  ) -> Result<VersionManifest, Box<dyn std::error::Error>> {
+  pub async fn resolve_local_version(&mut self, version_id: &MCVersion, update_if_necessary: bool) -> Result<VersionManifest, ResolveManifestError> {
     let mut manifest = if let Ok(manifest) = self.get_installed_version(version_id) {
       manifest
     } else {
@@ -171,7 +167,7 @@ impl VersionManager {
       manifest = self.install_version_by_id(version_id).await?;
     }
 
-    Ok(self.resolve_inheritances(manifest).await?)
+    self.resolve_inheritances(manifest).await
   }
 
   pub async fn install_version_by_id(&mut self, version_id: &MCVersion) -> Result<VersionManifest, InstallVersionError> {
