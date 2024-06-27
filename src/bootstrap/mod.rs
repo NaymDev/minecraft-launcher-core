@@ -10,20 +10,17 @@ use regex::Regex;
 use serde_json::json;
 use zip::ZipArchive;
 
-use crate::{
-  json::{
-    manifest::{
-      argument::ArgumentType,
-      assets::{ AssetIndex, AssetIndexInfo, AssetObject },
-      library::ExtractRules,
-      rule::{ OperatingSystem, RuleFeatureType },
-      VersionManifest,
-    },
-    EnvironmentFeatures,
-    Sha1Sum,
-    VersionInfo,
+use crate::json::{
+  manifest::{
+    argument::ArgumentType,
+    assets::{ AssetIndex, AssetIndexInfo, AssetObject },
+    library::ExtractRules,
+    rule::{ OperatingSystem, RuleFeatureType },
+    VersionManifest,
   },
-  version_manager::VersionManager,
+  EnvironmentFeatures,
+  Sha1Sum,
+  VersionInfo,
 };
 
 pub mod auth;
@@ -42,16 +39,14 @@ const DEFAULT_JRE_ARGUMENTS_64BIT: &str =
 pub struct GameBootstrap {
   pub options: GameOptions,
   env_features: EnvironmentFeatures,
-  version_manager: Option<VersionManager>,
 }
 
 impl GameBootstrap {
-  pub fn new(options: GameOptions, version_manager: Option<VersionManager>) -> Self {
+  pub fn new(options: GameOptions) -> Self {
     let env_features = options.env_features();
     Self {
       options,
       env_features,
-      version_manager,
     }
   }
 
@@ -66,28 +61,18 @@ impl GameBootstrap {
 }
 
 impl GameBootstrap {
-  pub async fn launch_game(&mut self) -> Result<GameProcess, Error> {
+  pub async fn launch_game(&mut self, manifest: &VersionManifest) -> Result<GameProcess, Error> {
     let game_dir = &self.options.game_dir;
     let env_features = &self.env_features;
-
-    // Prepare version manager
-    let version_manager = {
-      if self.version_manager.is_none() {
-        self.version_manager.replace(VersionManager::new(game_dir.clone(), env_features.clone()).await?);
-      }
-      self.version_manager.as_mut().unwrap()
-    };
-
-    let manifest = version_manager.resolve_local_version(&self.options.version, false, false).await?;
     info!("Launching game");
 
     // Prepare natives
-    if let Err(err) = self.unpack_natives(&manifest) {
+    if let Err(err) = self.unpack_natives(manifest) {
       error!("Couldn't unpack natives! {err}");
       return Err(Error::UnpackNatives(err));
     }
 
-    let game_assets_dir = self.reconstruct_assets(&manifest).map_err(|err| {
+    let game_assets_dir = self.reconstruct_assets(manifest).map_err(|err| {
       error!("Couldn't unpack assets! {err}");
       Error::UnpackAssets(err)
     })?;
@@ -119,7 +104,7 @@ impl GameBootstrap {
       game_process_builder.with_arguments(args.split(' ').collect());
     }
 
-    let substitutor = self.create_arguments_substitutor(&manifest, &game_assets_dir)?;
+    let substitutor = self.create_arguments_substitutor(manifest, &game_assets_dir)?;
 
     // Add JVM args
     if !manifest.arguments.is_empty() {
@@ -342,7 +327,7 @@ impl GameBootstrap {
     let mut substitutor = ArgumentSubstitutorBuilder::new();
 
     let classpath_separator = if OperatingSystem::get_current_platform() == OperatingSystem::Windows { ";" } else { ":" };
-    let version_id = self.options.version.to_string();
+    let version_id = manifest.id.to_string();
     let game_dir = &self.options.game_dir;
 
     let classpath = self.construct_classpath(manifest)?;

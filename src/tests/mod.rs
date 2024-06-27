@@ -132,7 +132,6 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   let natives_dir = game_dir.join("versions").join(mc_version.to_string()).join(format!("{}-natives-{}", mc_version, Utc::now().nanosecond()));
   let game_options = GameOptionsBuilder::default()
-    .version(mc_version.clone())
     .game_dir(game_dir)
     .natives_dir(natives_dir)
     .proxy(ProxyOptions::NoProxy)
@@ -148,21 +147,16 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   info!("Queuing library & version downloads");
   reporter.set_status("Resolving local version").set_progress(1);
-  let local_version = version_manager.resolve_local_version(&game_options.version, true, true).await?;
-  if !local_version.applies_to_current_environment(&env_features) {
-    return Err(format!("Version {} is is incompatible with the current environment", game_options.version).into());
+  let manifest = version_manager.resolve_local_version(&mc_version, true, true).await?;
+  if !manifest.applies_to_current_environment(&env_features) {
+    return Err(format!("Version {} is is incompatible with the current environment", mc_version).into());
   }
 
   reporter.clear();
-  version_manager.download_required_files(
-    &local_version,
-    game_options.max_concurrent_downloads,
-    game_options.max_download_attempts,
-    &reporter
-  ).await?;
+  version_manager.download_required_files(&manifest, game_options.max_concurrent_downloads, game_options.max_download_attempts, &reporter).await?;
 
-  let mut game_runner = GameBootstrap::new(game_options, Some(version_manager));
-  let mut process = game_runner.launch_game().await?;
+  let mut game_runner = GameBootstrap::new(game_options);
+  let mut process = game_runner.launch_game(&manifest).await?;
   let status = loop {
     if let Some(status) = process.exit_status() {
       break status;

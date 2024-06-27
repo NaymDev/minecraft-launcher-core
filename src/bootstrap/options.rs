@@ -3,8 +3,7 @@ use std::{ path::PathBuf, collections::HashMap, fmt::Debug };
 use derive_builder::Builder;
 use serde_json::Value;
 
-use crate::json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures, MCVersion };
-
+use crate::json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures };
 use super::auth::UserAuthentication;
 
 #[derive(Debug, Clone, Copy)]
@@ -64,9 +63,9 @@ impl ProxyOptions {
 #[derive(Debug, Builder)]
 #[builder(pattern = "owned", setter(strip_option))]
 pub struct GameOptions {
-  pub version: MCVersion,
   pub game_dir: PathBuf,
   pub natives_dir: PathBuf,
+
   #[builder(default)]
   pub proxy: ProxyOptions,
   #[builder(default)]
