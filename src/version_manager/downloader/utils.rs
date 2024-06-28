@@ -94,8 +94,8 @@ pub fn create_lib_downloadable(
   let classifier = lib.get_artifact_classifier(os)?;
 
   let libraries_dir = game_dir.join("libraries");
-  let file_path = lib.name.get_local_path(&libraries_dir);
   let artifact_path = lib.get_artifact_path(classifier);
+  let file_path = libraries_dir.join(&artifact_path);
 
   // If the lib has a single url
   if let Some(url) = &lib.url {
