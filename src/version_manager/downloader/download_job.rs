@@ -1,8 +1,8 @@
-use std::{ sync::{ Arc, RwLock }, time::Duration };
+use std::{ mem::take, sync::Arc, time::Duration };
 
 use chrono::Utc;
 use futures::{ stream::iter, StreamExt };
-use log::{ info, error, warn };
+use log::{ error, info, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy };
 
 use super::{ downloadables::Downloadable, error::Error, progress_reporter::ProgressReporter };
@@ -12,15 +12,13 @@ type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 pub struct DownloadJob {
   name: String,
   client: Client,
-  all_files: Arc<RwLock<Vec<DownloadableSync>>>,
+  all_files: Vec<Box<dyn Downloadable + Send + Sync>>,
   ignore_failures: bool,
   concurrent_downloads: u16,
   max_download_attempts: u8,
 
   // Tracks progress of the entire download job
   progress_reporter: Arc<ProgressReporter>,
-  // Passed to each downloadable, to track progress of the entire download job
-  downloadable_progress_reporter: Arc<ProgressReporter>,
 }
 
 impl Default for DownloadJob {
@@ -33,9 +31,8 @@ impl Default for DownloadJob {
       concurrent_downloads: 16,
       max_download_attempts: 5,
 
-      all_files: Arc::default(),
+      all_files: vec![],
       progress_reporter: Arc::default(),
-      downloadable_progress_reporter: Arc::default(),
     }
   }
 }
@@ -70,10 +67,20 @@ impl DownloadJob {
 
   pub fn with_progress_reporter(mut self, progress_reporter: &Arc<ProgressReporter>) -> Self {
     self.progress_reporter = Arc::clone(progress_reporter);
+    self
+  }
 
-    let downloadable_progress_reporter = {
-      let progress_reporter = Arc::clone(progress_reporter);
-      let all_files = Arc::clone(&self.all_files);
+  pub fn add_downloadables(mut self, mut downloadables: Vec<Box<dyn Downloadable + Send + Sync>>) -> Self {
+    self.all_files.append(&mut downloadables);
+    self
+  }
+
+  fn prepare_downloadables(&mut self) -> Vec<DownloadableSync> {
+    let all_files: Vec<DownloadableSync> = take(&mut self.all_files).into_iter().map(Arc::from).collect();
+
+    let reporter = {
+      let progress_reporter = Arc::clone(&self.progress_reporter);
+      let all_files = all_files.clone();
       Arc::new(
         ProgressReporter::new(move |_update| {
           Self::update_progress(&all_files, &progress_reporter);
@@ -81,28 +88,20 @@ impl DownloadJob {
       )
     };
 
-    self.downloadable_progress_reporter = downloadable_progress_reporter;
-    self
-  }
-
-  pub fn add_downloadables(self, downloadables: Vec<Box<dyn Downloadable + Send + Sync>>) -> Self {
-    let mut all_files = self.all_files.write().unwrap();
-    for downloadable in downloadables {
-      downloadable.get_monitor().set_reporter(self.downloadable_progress_reporter.clone());
-      let downloadable_arc = Arc::from(downloadable);
-      all_files.push(downloadable_arc);
+    for downloadable in all_files.iter() {
+      downloadable.get_monitor().set_reporter(Arc::clone(&reporter));
     }
-    drop(all_files);
-    self
+
+    all_files
   }
 }
 
 impl DownloadJob {
-  pub async fn start(self) -> Result<(), Error> {
+  pub async fn start(mut self) -> Result<(), Error> {
     self.progress_reporter.clear();
 
     let start_time = Utc::now();
-    let downloadables = self.all_files.read().unwrap().to_vec();
+    let downloadables = self.prepare_downloadables();
     let results = iter(downloadables)
       .map(|downloadable| self.try_download(downloadable))
       .buffered(self.concurrent_downloads as usize)
@@ -128,57 +127,58 @@ impl DownloadJob {
       downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
     }
 
-    let mut download_result = Ok(&downloadable);
     let target_file = downloadable.get_target_file();
-    while downloadable.get_attempts() <= (self.max_download_attempts as usize) {
+    loop {
       info!("Attempting to download {} for job '{}'... (try {})", target_file.display(), self.name, downloadable.get_attempts());
-      download_result = downloadable.download(&self.client).await.map(|_| &downloadable);
+      let download_result = downloadable.download(&self.client).await;
 
       let monitor = downloadable.get_monitor();
       monitor.set_current(monitor.get_total());
 
-      if let Err(err) = &download_result {
-        warn!("Couldn't download {} for job '{}': {}", downloadable.url(), self.name, err);
-      } else {
-        info!("Finished downloading {} for job '{}'", target_file.display(), self.name);
-        downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
-        break;
+      match download_result {
+        Ok(_) => {
+          info!("Finished downloading {} for job '{}'", target_file.display(), self.name);
+          downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
+          break Ok(downloadable);
+        }
+        Err(err) => {
+          warn!("Couldn't download {} for job '{}': {}", downloadable.url(), self.name, err);
+          if downloadable.get_attempts() > (self.max_download_attempts as usize) {
+            error!("Gave up trying to download {} for job '{}'", downloadable.url(), self.name);
+            break Err(err);
+          }
+        }
       }
     }
-
-    if download_result.is_err() {
-      error!("Gave up trying to download {} for job '{}'", downloadable.url(), self.name);
-    }
-
-    download_result.cloned()
   }
 
-  fn update_progress(all_files: &RwLock<Vec<DownloadableSync>>, progress_reporter: &ProgressReporter) {
-    if let Ok(all_files) = all_files.try_read() {
-      let all_files = &*all_files;
-      if all_files.is_empty() {
-        progress_reporter.clear();
-        return;
-      }
+  fn update_progress(all_files: &Vec<DownloadableSync>, progress_reporter: &ProgressReporter) {
+    let mut current_size = 0;
+    let mut total_size = 0;
 
-      let mut current_size = 0;
-      let mut total_size = 0;
-      let mut last_file: Option<&DownloadableSync> = None;
-      for file in all_files {
-        current_size += file.get_monitor().get_current();
-        total_size += file.get_monitor().get_total();
+    let mut displayed_file: Option<&DownloadableSync> = None;
 
-        if let Some(last_file) = last_file {
-          if last_file.get_end_time().is_none() && (file.get_start_time() >= last_file.get_start_time() || file.get_end_time().is_some()) {
+    for file in all_files {
+      current_size += file.get_monitor().get_current();
+      total_size += file.get_monitor().get_total();
+
+      if file.get_end_time().is_none() {
+        // If `file` started first, or if `displayed` has finished during the loop, replace it
+        if let Some(displayed) = displayed_file {
+          if file.get_start_time() >= displayed.get_start_time() && displayed.get_end_time().is_none() {
             continue;
           }
         }
-        last_file = Some(file);
+        displayed_file.replace(file);
       }
+    }
 
-      let status = last_file.map(|file| file.get_status()).unwrap_or_default();
+    if let Some(displayed_file) = displayed_file {
+      let status = displayed_file.get_status();
       let scaled_current = (((current_size as f64) / (total_size as f64)) * 100.0).ceil();
       progress_reporter.set(status, scaled_current as u32, 100);
+    } else {
+      progress_reporter.clear();
     }
   }
 }
