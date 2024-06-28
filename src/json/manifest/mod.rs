@@ -73,7 +73,7 @@ impl VersionManifest {
     for library in libraries {
       if !library.natives.is_empty() {
         if let Some(native) = library.natives.get(os) {
-          set.insert(format!("libraries/{}", library.get_artifact_path(Some(native.as_str()))));
+          set.insert(format!("libraries/{}", library.get_artifact_path(Some(native.clone()))));
         }
       } else {
         set.insert(format!("libraries/{}", library.get_artifact_path(None)));

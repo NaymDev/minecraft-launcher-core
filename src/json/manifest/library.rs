@@ -1,4 +1,4 @@
-use std::{ collections::HashMap, path::Path };
+use std::{ collections::HashMap, env::consts::ARCH, path::Path };
 
 use serde::{ Deserialize, Serialize };
 
@@ -38,20 +38,22 @@ impl Library {
     action == RuleAction::Allow
   }
 
-  pub fn get_artifact_path(&self, classifier: Option<&str>) -> String {
+  pub fn get_artifact_path(&self, classifier: Option<String>) -> String {
     let mut new_artifact = self.name.clone();
     if let Some(classifier) = classifier {
-      new_artifact.classifier = Some(classifier.to_string());
+      new_artifact.classifier = Some(classifier);
     }
     new_artifact.get_path_string()
   }
 
-  pub fn get_artifact_classifier(&self, os: &OperatingSystem) -> Option<Option<&str>> {
+  pub fn get_artifact_classifier(&self, os: &OperatingSystem) -> Option<Option<String>> {
     if self.natives.is_empty() {
       return Some(None);
     }
 
     if let Some(classifier) = self.natives.get(os) {
+      let arch = if ARCH == "x86" { "32" } else { "64" };
+      let classifier = classifier.replace("${arch}", arch);
       return Some(Some(classifier));
     }
 
@@ -87,13 +89,14 @@ impl ExtractRules {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LibraryDownloadInfo {
-  pub artifact: DownloadInfo,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub artifact: Option<DownloadInfo>,
   #[serde(default, skip_serializing_if = "HashMap::is_empty")]
   pub classifiers: HashMap<String, DownloadInfo>,
 }
 
 impl LibraryDownloadInfo {
-  pub fn get_download_info(&self, classifier: Option<&str>) -> Option<DownloadInfo> {
-    if let Some(classifier) = classifier { self.classifiers.get(classifier).cloned() } else { Some(self.artifact.clone()) }
+  pub fn get_download_info(&self, classifier: Option<String>) -> Option<DownloadInfo> {
+    if let Some(classifier) = classifier { self.classifiers.get(&classifier).cloned() } else { self.artifact.clone() }
   }
 }

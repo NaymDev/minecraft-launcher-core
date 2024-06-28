@@ -137,13 +137,15 @@ impl GameBootstrap {
             "-Dminecraft.launcher.brand=${launcher_name}",
             "-Dminecraft.launcher.version=${launcher_version}",
             "-Dminecraft.client.jar=${primary_jar}",
-            "-cp ${classpath}"
+            "-cp",
+            "${classpath}"
           ]
         )
       );
     }
 
     game_process_builder.with_argument(manifest.get_main_class());
+
     info!("Half command: {}", game_process_builder.get_args().join(" "));
     if !manifest.arguments.is_empty() {
       if let Some(arguments) = manifest.arguments.get(&ArgumentType::Game) {
@@ -237,9 +239,8 @@ impl GameBootstrap {
     }
 
     for lib in libs {
-      let natives = &lib.natives;
-      if let Some(native_id) = natives.get(&os) {
-        let file = &self.options.game_dir.join("libraries").join(lib.get_artifact_path(Some(native_id)).replace('/', MAIN_SEPARATOR_STR));
+      if let Some(Some(native_id)) = lib.get_artifact_classifier(&os) {
+        let file = &self.options.game_dir.join("libraries").join(lib.get_artifact_path(Some(native_id.clone())).replace('/', MAIN_SEPARATOR_STR));
         let file = File::open(file).map_err(UnpackNativesError::ReadNative)?;
         let zip_file = ZipArchive::new(file)?;
         let extract_rules = lib.extract.as_ref();
@@ -362,6 +363,8 @@ impl GameBootstrap {
     let auth = &self.options.authentication;
     substitutor
       .add("auth_access_token", auth.access_token())
+      .add("user_properties", "{}") // TODO: add
+      .add("user_properties_map", "{}") // TODO: add
       .add("auth_session", auth.auth_session())
 
       .add("auth_player_name", &auth.username)
