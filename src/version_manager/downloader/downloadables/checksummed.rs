@@ -9,7 +9,6 @@ use super::{ error::HashError, Downloadable, DownloadableMonitor };
 pub struct ChecksummedDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub force_download: bool,
   pub start_time: Arc<Mutex<Option<u64>>>,
   pub end_time: Arc<Mutex<Option<u64>>>,
 
@@ -17,11 +16,10 @@ pub struct ChecksummedDownloadable {
 }
 
 impl ChecksummedDownloadable {
-  pub fn new(url: &str, target_file: &Path, force_download: bool) -> Self {
+  pub fn new(url: &str, target_file: &Path) -> Self {
     Self {
       url: url.to_string(),
       target_file: target_file.to_path_buf(),
-      force_download,
       start_time: Arc::new(Mutex::new(None)),
       end_time: Arc::new(Mutex::new(None)),
 
@@ -38,10 +36,6 @@ impl Downloadable for ChecksummedDownloadable {
 
   fn get_target_file(&self) -> &PathBuf {
     &self.target_file
-  }
-
-  fn force_download(&self) -> bool {
-    self.force_download
   }
 
   fn get_status(&self) -> String {

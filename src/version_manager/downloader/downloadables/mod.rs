@@ -28,7 +28,6 @@ pub use asset::{ AssetDownloadable, AssetDownloadableStatus };
 pub trait Downloadable: Send + Sync {
   fn url(&self) -> &String;
   fn get_target_file(&self) -> &PathBuf;
-  fn force_download(&self) -> bool;
   fn get_status(&self) -> String;
   fn get_monitor(&self) -> &Arc<DownloadableMonitor>;
 

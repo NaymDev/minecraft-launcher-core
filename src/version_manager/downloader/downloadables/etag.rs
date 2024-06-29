@@ -49,10 +49,6 @@ impl Downloadable for EtagDownloadable {
     &self.target_file
   }
 
-  fn force_download(&self) -> bool {
-    self.force_download
-  }
-
   fn get_status(&self) -> String {
     let file_name = self.get_target_file().file_name().and_then(OsStr::to_str).unwrap_or(self.url());
     format!("Downloading {}", file_name)

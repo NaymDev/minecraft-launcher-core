@@ -19,7 +19,7 @@ pub fn get_jar_downloadable(game_dir: &Path, local_version: &VersionManifest) ->
   let jar_path = game_dir.join("versions").join(&version_id).join(format!("{}.jar", &version_id));
 
   if let Some(DownloadInfo { sha1, url, .. }) = local_version.get_download_url(DownloadType::Client) {
-    Box::new(PreHashedDownloadable::new(url, &jar_path, false, sha1.clone()))
+    Box::new(PreHashedDownloadable::new(url, &jar_path, sha1.clone()))
   } else {
     let url = format!("https://s3.amazonaws.com/Minecraft.Download/versions/{}/{}.jar", &version_id, &version_id);
     Box::new(EtagDownloadable::new(&url, &jar_path, false))
@@ -36,7 +36,7 @@ pub fn get_library_downloadables(
   local_version
     .get_relevant_libraries(env_features)
     .into_iter()
-    .flat_map(|lib| create_lib_downloadable(lib, game_dir, &os, false))
+    .flat_map(|lib| create_lib_downloadable(lib, game_dir, &os))
     .collect()
 }
 
@@ -84,12 +84,7 @@ pub async fn get_asset_downloadables(
   Ok(downloadables)
 }
 
-pub fn create_lib_downloadable(
-  lib: &Library,
-  game_dir: &Path,
-  os: &OperatingSystem,
-  force_download: bool
-) -> Option<Box<dyn Downloadable + Send + Sync>> {
+pub fn create_lib_downloadable(lib: &Library, game_dir: &Path, os: &OperatingSystem) -> Option<Box<dyn Downloadable + Send + Sync>> {
   // If the lib has a natives field, but the os is not supported, return None immediately
   let classifier = lib.get_artifact_classifier(os)?;
 
@@ -101,20 +96,20 @@ pub fn create_lib_downloadable(
   if let Some(url) = &lib.url {
     let mut url = Url::parse(url).ok()?;
     url.set_path(&artifact_path);
-    let downloadable = ChecksummedDownloadable::new(url.as_str(), &file_path, force_download);
+    let downloadable = ChecksummedDownloadable::new(url.as_str(), &file_path);
     return Some(Box::new(downloadable));
   }
 
   // If the lib has no url, try the default download server
   if lib.downloads.is_none() {
     let url = format!("https://libraries.minecraft.net/{}", &artifact_path);
-    return Some(Box::new(ChecksummedDownloadable::new(&url, &file_path, force_download)));
+    return Some(Box::new(ChecksummedDownloadable::new(&url, &file_path)));
   }
 
   // If the lib has multiple urls (like for each OS)
   // We obtain the download info for the OS
   if let Some(DownloadInfo { url, sha1, .. }) = lib.get_download_info(os) {
-    let downloadable = PreHashedDownloadable::new(&url, &file_path, false, sha1);
+    let downloadable = PreHashedDownloadable::new(&url, &file_path, sha1);
     Some(Box::new(downloadable))
   } else {
     None

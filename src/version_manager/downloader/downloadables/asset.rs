@@ -14,7 +14,6 @@ use super::{ error::HashError, DownloadError, Downloadable, DownloadableMonitor 
 pub struct AssetDownloadable {
   pub url: String,
   pub target_file: PathBuf,
-  pub force_download: bool,
   pub start_time: Arc<Mutex<Option<u64>>>,
   pub end_time: Arc<Mutex<Option<u64>>>,
 
@@ -39,7 +38,6 @@ impl AssetDownloadable {
     Self {
       url,
       target_file,
-      force_download: false,
       start_time: Arc::new(Mutex::new(None)),
       end_time: Arc::new(Mutex::new(None)),
 
@@ -114,10 +112,6 @@ impl Downloadable for AssetDownloadable {
 
   fn get_target_file(&self) -> &PathBuf {
     &self.target_file
-  }
-
-  fn force_download(&self) -> bool {
-    self.force_download
   }
 
   fn get_status(&self) -> String {
