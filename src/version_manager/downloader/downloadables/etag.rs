@@ -2,6 +2,7 @@ use std::{ ffi::OsStr, fs, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
 use log::info;
+use md5::{ Digest, Md5 };
 use reqwest::{ header::HeaderValue, Client };
 
 use crate::version_manager::downloader::error::Error;
@@ -92,14 +93,21 @@ impl Downloadable for EtagDownloadable {
     self.ensure_file_writable(&self.target_file)?;
 
     let target = &self.target_file;
-    let res = client.get(&self.url).send().await?.error_for_status()?;
+    let mut res = client.get(&self.url).send().await?.error_for_status()?;
     if let Some(content_len) = res.content_length() {
       self.monitor.set_total(content_len as usize);
     }
     let etag = Self::get_etag(res.headers().get("ETag"));
-    let bytes = res.bytes().await?;
-    let md5 = md5::compute(&bytes).0;
-    fs::write(target, &bytes)?;
+
+    let mut file = File::create(target)?;
+    let mut md5 = Md5::new();
+    while let Some(chunk) = res.chunk().await? {
+      file.write_all(&chunk)?;
+      md5.update(&chunk);
+    }
+    file.flush()?;
+    let md5 = md5.finalize().to_vec();
+
     if etag.contains('-') {
       info!("Didn't have etag so assuming our copy is good");
       return Ok(());
