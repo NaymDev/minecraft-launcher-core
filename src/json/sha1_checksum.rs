@@ -1,4 +1,4 @@
-use std::{ fmt::{ Debug, Display }, io::{ Read, Error as IoError } };
+use std::{ fmt::{ Debug, Display }, io::{ copy, Read, Error as IoError } };
 
 use hex::FromHexError;
 use serde::{ Deserialize, Serialize };
@@ -13,14 +13,36 @@ impl Sha1Sum {
     Self(value)
   }
 
+  pub fn as_slice(&self) -> &[u8] {
+    &self.0
+  }
+
   pub fn from_reader<T: Read>(value: &mut T) -> Result<Self, IoError> {
     let mut sha1_hasher = Sha1::new();
-    std::io::copy(value, &mut sha1_hasher)?;
-    Ok(Sha1Sum(sha1_hasher.finalize().into()))
+    copy(value, &mut sha1_hasher)?;
+    Ok(sha1_hasher.into())
   }
 
   pub fn null() -> Self {
     Self([0u8; 20])
+  }
+}
+
+impl From<Sha1> for Sha1Sum {
+  fn from(value: Sha1) -> Self {
+    Self(value.finalize().into())
+  }
+}
+
+impl From<Sha1Sum> for Vec<u8> {
+  fn from(val: Sha1Sum) -> Self {
+    val.0.to_vec()
+  }
+}
+
+impl From<Sha1Sum> for [u8; 20] {
+  fn from(val: Sha1Sum) -> Self {
+    val.0
   }
 }
 
