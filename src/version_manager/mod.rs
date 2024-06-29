@@ -239,7 +239,7 @@ impl VersionManager {
     max_concurrent_downloads: u16,
     max_download_attempts: u8,
     progress_reporter: &Arc<ProgressReporter>
-  ) -> Result<(), Box<dyn std::error::Error>> {
+  ) -> Result<(), downloader::error::Error> {
     let downloader = ClientDownloader::new(max_concurrent_downloads as usize, max_download_attempts as usize, Arc::clone(progress_reporter));
     downloader.download_version(version_manifest, self).await
   }

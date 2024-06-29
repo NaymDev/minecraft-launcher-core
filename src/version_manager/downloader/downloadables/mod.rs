@@ -1,7 +1,6 @@
 use std::{ fs::{ self, create_dir_all, File }, io::Write, path::{ Path, PathBuf }, sync::{ Arc, Mutex } };
 
 use async_trait::async_trait;
-use error::HashError;
 use log::info;
 use reqwest::Client;
 use sha1::{ Digest, Sha1 };
@@ -17,7 +16,7 @@ mod asset;
 
 mod error;
 
-pub use error::DownloadError;
+pub use error::{ DownloadError, HashError };
 
 pub use checksummed::ChecksummedDownloadable;
 pub use prehashed::PreHashedDownloadable;

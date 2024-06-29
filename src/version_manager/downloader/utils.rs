@@ -1,15 +1,12 @@
-use std::{ boxed::Box, fs::{ self, create_dir_all, File }, io::{ self, Cursor }, path::Path, str::FromStr, vec::Vec };
+use std::{ boxed::Box, path::Path, str::FromStr, vec::Vec };
 
-use log::warn;
-use reqwest::{ Client, Url };
-use sha1::{ Digest, Sha1 };
+use reqwest::Url;
 
 use crate::{
   version_manager::downloader::downloadables::{ AssetDownloadable, ChecksummedDownloadable, Downloadable, EtagDownloadable, PreHashedDownloadable },
   json::{
     manifest::{ assets::AssetIndex, download::{ DownloadInfo, DownloadType }, library::Library, rule::OperatingSystem, VersionManifest },
     EnvironmentFeatures,
-    Sha1Sum,
     VersionInfo,
   },
 };
@@ -40,49 +37,17 @@ pub fn get_library_downloadables(
     .collect()
 }
 
-pub async fn get_asset_downloadables(
-  game_dir: &Path,
-  local_version: &VersionManifest
-) -> Result<Vec<Box<dyn Downloadable + Send + Sync>>, Box<dyn std::error::Error>> {
+pub fn get_asset_downloadables(game_dir: &Path, asset_index: &AssetIndex) -> Vec<Box<dyn Downloadable + Send + Sync>> {
   let assets_dir = game_dir.join("assets");
   let objects_dir = assets_dir.join("objects");
-  let indexes_dir = assets_dir.join("indexes");
-
-  let index_info = local_version.asset_index.as_ref().ok_or("Asset index not found in version manifest!")?;
-  let index_file = indexes_dir.join(format!("{}.json", index_info.id));
-
-  if let Ok(mut file) = File::open(&index_file) {
-    // Obtain the SHA-1 hash of the already downloaded index file
-    let mut sha1 = Sha1::new();
-    io::copy(&mut file, &mut sha1)?;
-    let sha1 = Sha1Sum::new(sha1.finalize().into());
-
-    // If the hash is incorrect, redownload
-    if sha1 != index_info.sha1 {
-      warn!("Asset index file is invalid, redownloading");
-      fs::remove_file(&index_file)?;
-    }
-  }
-
-  // Parse the asset index file
-  let asset_index: AssetIndex = if let Ok(file) = File::open(&index_file) {
-    serde_json::from_reader(file)?
-  } else {
-    // Download asset index file and parse it
-    let bytes = Client::new().get(&index_info.url).send().await?.bytes().await?;
-    create_dir_all(indexes_dir)?;
-    fs::write(&index_file, &bytes)?;
-    serde_json::from_reader(&mut Cursor::new(&bytes))?
-  };
 
   // Turn each resource object into a downloadable
-  let url_base = Url::from_str("https://resources.download.minecraft.net/")?;
+  let url_base = Url::from_str("https://resources.download.minecraft.net/").unwrap();
   let mut downloadables: Vec<Box<dyn Downloadable + Send + Sync>> = vec![];
   for (asset_object, asset_name) in asset_index.get_unique_objects() {
     downloadables.push(Box::new(AssetDownloadable::new(asset_name, asset_object, &url_base, &objects_dir)));
   }
-
-  Ok(downloadables)
+  downloadables
 }
 
 pub fn create_lib_downloadable(lib: &Library, game_dir: &Path, os: &OperatingSystem) -> Option<Box<dyn Downloadable + Send + Sync>> {
