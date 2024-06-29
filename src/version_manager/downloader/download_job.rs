@@ -128,8 +128,11 @@ impl DownloadJob {
     }
 
     let target_file = downloadable.get_target_file();
-    loop {
-      info!("Attempting to download {} for job '{}'... (try {})", target_file.display(), self.name, downloadable.get_attempts());
+
+    let mut last_error = None;
+    for attempt in 0..self.max_download_attempts {
+      info!("Attempting to download {} for job '{}'... (try {})", target_file.display(), self.name, attempt);
+
       let download_result = downloadable.download(&self.client).await;
 
       let monitor = downloadable.get_monitor();
@@ -139,16 +142,19 @@ impl DownloadJob {
         Ok(_) => {
           info!("Finished downloading {} for job '{}'", target_file.display(), self.name);
           downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
-          break Ok(downloadable);
+          return Ok(downloadable);
         }
         Err(err) => {
           warn!("Couldn't download {} for job '{}': {}", downloadable.url(), self.name, err);
-          if downloadable.get_attempts() > (self.max_download_attempts as usize) {
-            error!("Gave up trying to download {} for job '{}'", downloadable.url(), self.name);
-            break Err(err);
-          }
+          last_error.replace(err);
         }
       }
+    }
+
+    error!("Gave up trying to download {} for job '{}'", downloadable.url(), self.name);
+    match last_error {
+      Some(err) => Err(err.into()),
+      None => Ok(downloadable),
     }
   }
 
