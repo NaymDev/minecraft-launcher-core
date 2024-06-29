@@ -89,7 +89,7 @@ impl Downloadable for PreHashedDownloadable {
     self.ensure_file_writable(&self.target_file)?;
     let target = self.get_target_file();
     if target.is_file() {
-      let local_hash = Sha1Sum::from_reader(&mut File::open(target)?)?;
+      let local_hash = Sha1Sum::from_reader(&mut File::open(target)?).map_err(Error::ChecksumError)?;
       if local_hash == self.expected_hash {
         info!("Local file matches hash, using it");
         return Ok(());

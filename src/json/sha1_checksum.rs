@@ -1,6 +1,6 @@
-use std::{ fmt::{ Debug, Display }, io::Read };
+use std::{ fmt::{ Debug, Display }, io::{ Read, Error as IoError } };
 
-use thiserror::Error;
+use hex::FromHexError;
 use serde::{ Deserialize, Serialize };
 use sha1::{ Digest, Sha1 };
 
@@ -13,7 +13,7 @@ impl Sha1Sum {
     Self(value)
   }
 
-  pub fn from_reader<T: Read>(value: &mut T) -> Result<Self, Sha1SumError> {
+  pub fn from_reader<T: Read>(value: &mut T) -> Result<Self, IoError> {
     let mut sha1_hasher = Sha1::new();
     std::io::copy(value, &mut sha1_hasher)?;
     Ok(Sha1Sum(sha1_hasher.finalize().into()))
@@ -25,7 +25,7 @@ impl Sha1Sum {
 }
 
 impl TryFrom<String> for Sha1Sum {
-  type Error = Sha1SumError;
+  type Error = FromHexError;
   fn try_from(value: String) -> Result<Self, Self::Error> {
     let mut buf = [0u8; 20];
     hex::decode_to_slice(value, &mut buf)?;
@@ -49,10 +49,4 @@ impl Display for Sha1Sum {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}", hex::encode(self.0))
   }
-}
-
-#[derive(Error, Debug)]
-pub enum Sha1SumError {
-  #[error(transparent)] HexError(#[from] hex::FromHexError),
-  #[error(transparent)] IoError(#[from] std::io::Error),
 }

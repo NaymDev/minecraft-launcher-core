@@ -305,7 +305,7 @@ impl GameBootstrap {
           let mut should_copy = true;
           if asset_file.is_file() {
             let mut file = File::open(&asset_file).map_err(UnpackAssetsError::ReadAssetObject)?;
-            let hash = Sha1Sum::from_reader(&mut file)?;
+            let hash = Sha1Sum::from_reader(&mut file).map_err(UnpackAssetsError::ChecksumAssetObject)?;
             if hash != *asset_hash {
               should_copy = true;
             }

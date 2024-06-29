@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::json::{ MCVersion, Sha1Sum, Sha1SumError };
+use crate::json::{ MCVersion, Sha1Sum };
 
 #[derive(Error, Debug)]
 pub enum LoadVersionError {
@@ -25,7 +25,7 @@ pub enum InstallVersionError {
     actual: Sha1Sum,
   },
   #[error("failed to parse: {0}")] ParseError(#[from] serde_json::Error),
-  #[error(transparent)] ChecksumError(#[from] Sha1SumError),
+  #[error("failed to read checksum: {0}")] ChecksumError(#[source] std::io::Error),
   #[error(transparent)] IoError(#[from] std::io::Error),
 }
 

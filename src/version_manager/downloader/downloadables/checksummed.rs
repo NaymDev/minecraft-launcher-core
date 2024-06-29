@@ -100,7 +100,7 @@ impl Downloadable for ChecksummedDownloadable {
 
     // Try to get hash from local file
     if local_hash.is_none() && target_file.is_file() {
-      local_hash = Some(Sha1Sum::from_reader(&mut File::open(target_file)?)?);
+      local_hash = Some(Sha1Sum::from_reader(&mut File::open(target_file)?).map_err(Error::ChecksumError)?);
     }
 
     if expected_hash.is_none() {

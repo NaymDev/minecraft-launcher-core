@@ -3,7 +3,7 @@ use std::{ path::PathBuf, time::SystemTimeError };
 use thiserror::Error;
 use zip::result::ZipError;
 
-use crate::{ json::Sha1SumError, version_manager::error::{ LoadVersionError, ResolveManifestError } };
+use crate::version_manager::error::{ LoadVersionError, ResolveManifestError };
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -34,6 +34,6 @@ pub enum UnpackAssetsError {
   #[error("No asset index found in version manifest")] NoAssetIndex,
   #[error("Failed to parse asset index: {0}")] ParseAssetIndex(Box<dyn std::error::Error>),
   #[error("Failed to read asset object: {0}")] ReadAssetObject(std::io::Error),
-  #[error("Failed to calculate checksum for asset object: {0}")] ChecksumAssetObject(#[from] Sha1SumError),
+  #[error("Failed to calculate checksum for asset object: {0}")] ChecksumAssetObject(#[source] std::io::Error),
   #[error("Failed to unpack asset object: {0}")] UnpackAssetObject(std::io::Error),
 }

@@ -39,7 +39,7 @@ impl RemoteVersionInfo {
 
   pub async fn fetch(&self) -> Result<VersionManifest, InstallVersionError> {
     let bytes = reqwest::get(&self.url).await?.bytes().await?;
-    let sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
+    let sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes)).map_err(InstallVersionError::ChecksumError)?;
     if sha1 != self.sha1 {
       return Err(InstallVersionError::ChecksumMismatch { expected: self.sha1.clone(), actual: sha1 });
     }

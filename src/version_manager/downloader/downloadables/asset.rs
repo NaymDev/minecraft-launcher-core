@@ -62,7 +62,7 @@ impl AssetDownloadable {
     decoder.read_to_end(&mut bytes)?;
     fs::write(target, &bytes)?;
 
-    let local_sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
+    let local_sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes)).map_err(Error::ChecksumError)?;
     if local_sha1 == self.asset.hash {
       info!("Had local compressed asset, unpacked successfully and hash matched");
     } else {
@@ -158,7 +158,7 @@ impl Downloadable for AssetDownloadable {
 
     if let Some(compressed_target) = &compressed_target {
       if compressed_target.is_file() {
-        let local_hash = Sha1Sum::from_reader(&mut File::open(compressed_target)?)?;
+        let local_hash = Sha1Sum::from_reader(&mut File::open(compressed_target)?).map_err(Error::ChecksumError)?;
         if &local_hash == self.asset.compressed_hash.as_ref().unwrap() {
           return self.decompress_asset(target, compressed_target);
         }
@@ -204,7 +204,7 @@ impl Downloadable for AssetDownloadable {
       }
       let bytes = res.bytes().await?;
       fs::write(target, &bytes)?;
-      let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes))?;
+      let local_hash = Sha1Sum::from_reader(&mut Cursor::new(&bytes)).map_err(Error::ChecksumError)?;
       if local_hash == self.asset.hash {
         info!("Downloaded asset and hash matched successfully");
         return Ok(());

@@ -1,12 +1,12 @@
 use thiserror::Error;
 
-use crate::json::{ Sha1Sum, Sha1SumError };
+use crate::json::Sha1Sum;
 
 #[derive(Error, Debug)]
 pub enum Error {
   #[error("failed to download: {0}")] DownloadError(#[from] reqwest::Error),
   #[error(transparent)] IoError(#[from] std::io::Error),
-  #[error(transparent)] ChecksumError(#[from] Sha1SumError),
+  #[error("Failed to calculate checksum")] ChecksumError(#[source] std::io::Error),
   #[error("Checksum did not match downloaded file (Checksum was {actual}, downloaded {expected})")] ChecksumMismatch {
     expected: Sha1Sum,
     actual: Sha1Sum,
