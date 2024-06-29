@@ -1,4 +1,4 @@
-use std::{ boxed::Box, fs::{ self, create_dir_all, File }, io::{ self, Cursor }, path::Path, vec::Vec };
+use std::{ boxed::Box, fs::{ self, create_dir_all, File }, io::{ self, Cursor }, path::Path, str::FromStr, vec::Vec };
 
 use log::warn;
 use reqwest::{ Client, Url };
@@ -76,9 +76,10 @@ pub async fn get_asset_downloadables(
   };
 
   // Turn each resource object into a downloadable
+  let url_base = Url::from_str("https://resources.download.minecraft.net/")?;
   let mut downloadables: Vec<Box<dyn Downloadable + Send + Sync>> = vec![];
   for (asset_object, asset_name) in asset_index.get_unique_objects() {
-    downloadables.push(Box::new(AssetDownloadable::new(asset_name, asset_object, "https://resources.download.minecraft.net/", &objects_dir)));
+    downloadables.push(Box::new(AssetDownloadable::new(asset_name, asset_object, &url_base, &objects_dir)));
   }
 
   Ok(downloadables)

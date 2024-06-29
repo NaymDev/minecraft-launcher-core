@@ -12,40 +12,42 @@ use crate::json::{ manifest::assets::AssetObject, Sha1Sum };
 use super::{ error::HashError, DownloadError, Downloadable, DownloadableMonitor };
 
 pub struct AssetDownloadable {
-  pub url: String,
+  pub asset_name: String,
+  pub asset_url: String,
   pub target_file: PathBuf,
+  pub asset: AssetObject,
+
   pub start_time: Arc<Mutex<Option<u64>>>,
   pub end_time: Arc<Mutex<Option<u64>>>,
 
-  pub name: String,
   pub status: Mutex<AssetDownloadableStatus>,
-  pub asset: AssetObject,
-  pub url_base: String,
-  pub destination: PathBuf,
+  pub url_base: Url,
+  pub destination_dir: PathBuf,
+
   pub monitor: Arc<DownloadableMonitor>,
 }
 
 impl AssetDownloadable {
-  pub fn new(name: &str, asset: &AssetObject, url_base: &str, objects_dir: &Path) -> Self {
+  pub fn new(asset_name: &str, asset: &AssetObject, url_base: &Url, objects_dir: &Path) -> Self {
     let path = AssetObject::create_path_from_hash(&asset.hash);
     let url = {
-      let mut url = Url::parse(url_base).unwrap(); // TODO: avoid unwrap
+      let mut url = url_base.clone();
       url.set_path(&path);
       url.to_string()
     };
 
     let target_file = objects_dir.join(path.replace('/', MAIN_SEPARATOR_STR));
     Self {
-      url,
+      asset_url: url,
       target_file,
       start_time: Arc::new(Mutex::new(None)),
       end_time: Arc::new(Mutex::new(None)),
 
-      name: name.to_string(),
+      asset_name: asset_name.to_string(),
       status: Mutex::new(AssetDownloadableStatus::Downloading),
       asset: asset.clone(),
-      url_base: url_base.to_string(),
-      destination: objects_dir.to_path_buf(),
+      url_base: url_base.clone(),
+      destination_dir: objects_dir.to_path_buf(),
       monitor: Arc::new(DownloadableMonitor::new(0, asset.size)),
     }
   }
@@ -107,7 +109,7 @@ impl AssetDownloadable {
 #[async_trait]
 impl Downloadable for AssetDownloadable {
   fn url(&self) -> &String {
-    &self.url
+    &self.asset_url
   }
 
   fn get_target_file(&self) -> &PathBuf {
@@ -115,7 +117,7 @@ impl Downloadable for AssetDownloadable {
   }
 
   fn get_status(&self) -> String {
-    format!("{} {}", self.status.lock().unwrap().as_str(), self.name)
+    format!("{} {}", self.status.lock().unwrap().as_str(), self.asset_name)
   }
 
   fn get_monitor(&self) -> &Arc<DownloadableMonitor> {
@@ -170,10 +172,10 @@ impl Downloadable for AssetDownloadable {
       None => self.try_download(client).await,
       Some(expected_compressed_hash) => {
         let hash_path = AssetObject::create_path_from_hash(expected_compressed_hash);
-        let compressed_target = self.destination.join(&hash_path);
+        let compressed_target = self.destination_dir.join(&hash_path);
 
         let compressed_url = {
-          let mut url = Url::parse(&self.url_base).map_err(|err| DownloadError::Other(Box::new(err)))?;
+          let mut url = self.url_base.clone();
           url.set_path(&hash_path);
           url.to_string()
         };
