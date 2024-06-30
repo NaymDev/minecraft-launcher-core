@@ -1,4 +1,4 @@
-use std::{ collections::{ HashMap, HashSet }, fs::{ create_dir_all, read_dir, File }, path::PathBuf, sync::Arc };
+use std::{ collections::{ HashMap, HashSet }, fs::{ create_dir_all, read_dir, File }, path::{ Path, PathBuf }, sync::Arc };
 
 use downloader::{ progress_reporter::ProgressReporter, ClientDownloader };
 use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
@@ -26,8 +26,22 @@ pub struct VersionManager {
 }
 
 impl VersionManager {
-  pub async fn new(game_dir: PathBuf, env_features: EnvironmentFeatures) -> Result<Self, LoadVersionError> {
-    let mut version_manager = Self { game_dir, env_features, local_cache: vec![], remote_cache: None, resolved_versions_cache: HashMap::new() };
+  /// Create an empty version manager
+  /// You must call `VersionManager::refresh` before using it
+  pub fn new(game_dir: &Path, env_features: &EnvironmentFeatures) -> Self {
+    Self {
+      game_dir: game_dir.to_path_buf(),
+      env_features: env_features.clone(),
+      local_cache: vec![],
+      remote_cache: None,
+      resolved_versions_cache: HashMap::new(),
+    }
+  }
+
+  /// Loads the version manager with the provided game directory and environment features.
+  /// Creates the version manager and refreshes it
+  pub async fn load(game_dir: &Path, env_features: &EnvironmentFeatures) -> Result<Self, LoadVersionError> {
+    let mut version_manager = Self::new(game_dir, env_features);
     version_manager.refresh().await?;
     Ok(version_manager)
   }
@@ -264,7 +278,7 @@ mod tests {
   #[tokio::test]
   async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
     SimpleLogger::new().init().unwrap();
-    let mut version_manager = VersionManager::new(temp_dir().join(".minecraft-test-rust"), EnvironmentFeatures::default()).await?;
+    let mut version_manager = VersionManager::load(&temp_dir().join(".minecraft-test-rust"), &EnvironmentFeatures::default()).await?;
     info!("{:#?}", version_manager.local_cache);
     let local = version_manager.get_installed_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
     if let Ok(local) = local {

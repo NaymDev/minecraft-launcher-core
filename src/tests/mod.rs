@@ -142,7 +142,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   reporter.set("Fetching version manifest", 0, 2);
   let env_features = game_options.env_features();
-  let mut version_manager = VersionManager::new(game_options.game_dir.clone(), env_features.clone()).await?;
+  let mut version_manager = VersionManager::load(&game_options.game_dir, &env_features).await?;
 
   info!("Queuing library & version downloads");
   reporter.set_status("Resolving local version").set_progress(1);
