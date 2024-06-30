@@ -11,7 +11,7 @@ pub enum DownloadError {
     actual: Vec<u8>,
   },
   #[error(transparent)] HashError(#[from] HashError),
-  #[error(transparent)] Other(Box<dyn std::error::Error>),
+  #[error(transparent)] Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[derive(Debug, Error)]

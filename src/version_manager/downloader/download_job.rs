@@ -5,7 +5,7 @@ use futures::{ stream::iter, StreamExt };
 use log::{ error, info, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy };
 
-use super::{ downloadables::Downloadable, error::Error, progress_reporter::ProgressReporter };
+use super::{ downloadables::{ DownloadError, Downloadable }, error::Error, progress_reporter::ProgressReporter };
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 
@@ -102,15 +102,12 @@ impl DownloadJob {
 
     let start_time = Utc::now();
     let downloadables = self.prepare_downloadables();
-    let results = iter(downloadables)
-      .map(|downloadable| self.try_download(downloadable))
-      .buffered(self.concurrent_downloads as usize)
-      .collect::<Vec<_>>().await;
+    let results = self.run(downloadables).await;
 
     let total_time = Utc::now().signed_duration_since(start_time).num_seconds();
     let failures = results
       .iter()
-      .flat_map(|r| r.as_ref().err())
+      .filter(|r| r.is_err())
       .collect::<Vec<_>>();
 
     self.progress_reporter.clear();
@@ -122,40 +119,19 @@ impl DownloadJob {
     Err(Error::JobFailed { name: self.name, failures: failures.len(), total_time })
   }
 
-  async fn try_download(&self, downloadable: DownloadableSync) -> Result<DownloadableSync, Error> {
-    if downloadable.get_start_time().is_none() {
-      downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
-    }
+  async fn run(&self, downloads: Vec<DownloadableSync>) -> Vec<Result<DownloadableSync, DownloadError>> {
+    let job_name = self.name.clone();
+    let client = self.client.clone();
+    let retries = self.max_download_attempts;
+    let concurrent_downloads = self.concurrent_downloads;
 
-    let target_file = downloadable.get_target_file();
+    let iter = iter(downloads)
+      .map(move |downloadable| (downloadable, job_name.clone(), client.clone(), retries))
+      .map(|(downloadable, job_name, client, retries)| download(job_name, client, retries, downloadable))
+      .buffer_unordered(concurrent_downloads as usize);
 
-    let mut last_error = None;
-    for attempt in 0..self.max_download_attempts {
-      info!("Attempting to download {} for job '{}'... (try {})", target_file.display(), self.name, attempt);
-
-      let download_result = downloadable.download(&self.client).await;
-
-      let monitor = downloadable.get_monitor();
-      monitor.set_current(monitor.get_total());
-
-      match download_result {
-        Ok(_) => {
-          info!("Finished downloading {} for job '{}'", target_file.display(), self.name);
-          downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
-          return Ok(downloadable);
-        }
-        Err(err) => {
-          warn!("Couldn't download {} for job '{}': {}", downloadable.url(), self.name, err);
-          last_error.replace(err);
-        }
-      }
-    }
-
-    error!("Gave up trying to download {} for job '{}'", downloadable.url(), self.name);
-    match last_error {
-      Some(err) => Err(err.into()),
-      None => Ok(downloadable),
-    }
+    // FIXME: currently, this was the only way i've found to make the future returned by the function implement `Send`
+    tokio::spawn(iter.collect()).await.unwrap()
   }
 
   fn update_progress(all_files: &Vec<DownloadableSync>, progress_reporter: &ProgressReporter) {
@@ -202,5 +178,41 @@ impl DownloadJob {
       client = client.proxy(proxy);
     }
     client.build()
+  }
+}
+
+async fn download(job_name: String, client: Client, retries: u8, downloadable: DownloadableSync) -> Result<DownloadableSync, DownloadError> {
+  if downloadable.get_start_time().is_none() {
+    downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
+  }
+
+  let target_file = downloadable.get_target_file();
+
+  let mut last_error = None;
+  for attempt in 0..retries {
+    info!("Attempting to download {} for job '{}'... (try {})", target_file.display(), job_name, attempt);
+
+    let download_result = downloadable.download(&client).await;
+
+    let monitor = downloadable.get_monitor();
+    monitor.set_current(monitor.get_total());
+
+    match download_result {
+      Ok(_) => {
+        info!("Finished downloading {} for job '{}'", target_file.display(), job_name);
+        downloadable.set_end_time(Utc::now().timestamp_millis() as u64);
+        return Ok(downloadable);
+      }
+      Err(err) => {
+        warn!("Couldn't download {} for job '{}': {}", downloadable.url(), job_name, err);
+        last_error.replace(err);
+      }
+    }
+  }
+
+  error!("Gave up trying to download {} for job '{}'", downloadable.url(), job_name);
+  match last_error {
+    Some(err) => Err(err),
+    None => Ok(downloadable),
   }
 }
