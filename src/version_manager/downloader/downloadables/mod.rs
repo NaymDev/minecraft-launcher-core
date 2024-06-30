@@ -7,8 +7,6 @@ use sha1::{ Digest, Sha1 };
 
 use crate::json::Sha1Sum;
 
-use super::progress_reporter::ProgressReporter;
-
 mod checksummed;
 mod prehashed;
 mod etag;
@@ -22,6 +20,8 @@ pub use checksummed::ChecksummedDownloadable;
 pub use prehashed::PreHashedDownloadable;
 pub use etag::EtagDownloadable;
 pub use asset::{ AssetDownloadable, AssetDownloadableStatus };
+
+use super::progress::{ EmptyReporter, ProgressReporter };
 
 #[async_trait]
 pub trait Downloadable: Send + Sync {
@@ -118,7 +118,7 @@ pub trait Downloadable: Send + Sync {
 pub struct DownloadableMonitor {
   current: Mutex<usize>,
   total: Mutex<usize>,
-  reporter: Mutex<Arc<ProgressReporter>>,
+  reporter: Mutex<ProgressReporter>,
 }
 
 impl DownloadableMonitor {
@@ -126,7 +126,7 @@ impl DownloadableMonitor {
     Self {
       current: Mutex::new(current),
       total: Mutex::new(total),
-      reporter: Mutex::new(Arc::new(ProgressReporter::new(|_| {}))),
+      reporter: Mutex::new(Arc::new(EmptyReporter)),
     }
   }
 
@@ -140,21 +140,15 @@ impl DownloadableMonitor {
 
   pub fn set_current(&self, current: usize) {
     *self.current.lock().unwrap() = current;
-    self.reporter
-      .lock()
-      .unwrap()
-      .set_progress(current as u32);
+    self.reporter.lock().unwrap().progress(current);
   }
 
   pub fn set_total(&self, total: usize) {
     *self.total.lock().unwrap() = total;
-    self.reporter
-      .lock()
-      .unwrap()
-      .set_total(total as u32);
+    self.reporter.lock().unwrap().total(total);
   }
 
-  pub fn set_reporter(&self, reporter: Arc<ProgressReporter>) {
+  pub fn set_reporter(&self, reporter: ProgressReporter) {
     *self.reporter.lock().unwrap() = reporter;
     // TODO: fire update?
   }

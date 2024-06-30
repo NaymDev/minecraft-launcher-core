@@ -1,6 +1,6 @@
 use std::{ collections::{ HashMap, HashSet }, fs::{ create_dir_all, read_dir, File }, path::{ Path, PathBuf }, sync::Arc };
 
-use downloader::{ progress_reporter::ProgressReporter, ClientDownloader };
+use downloader::{ progress::ProgressReporter, ClientDownloader };
 use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
 use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
@@ -252,7 +252,7 @@ impl VersionManager {
     version_manifest: &VersionManifest,
     max_concurrent_downloads: u16,
     max_download_attempts: u8,
-    progress_reporter: &Arc<ProgressReporter>
+    progress_reporter: &ProgressReporter
   ) -> Result<(), downloader::error::Error> {
     let downloader = ClientDownloader::new(max_concurrent_downloads as usize, max_download_attempts as usize, Arc::clone(progress_reporter));
     downloader.download_version(version_manifest, self).await

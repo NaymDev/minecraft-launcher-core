@@ -1,10 +1,10 @@
-use std::{ fs::{ self, File }, path::Path, sync::Arc };
+use std::{ fs::{ self, File }, path::Path };
 
 use download_job::DownloadJob;
 use downloadables::{ DownloadError, HashError };
 use log::warn;
 use md5::Digest;
-use progress_reporter::ProgressReporter;
+use progress::ProgressReporter;
 use reqwest::Client;
 use sha1::Sha1;
 use utils::{ get_jar_downloadable, get_library_downloadables, get_asset_downloadables };
@@ -13,7 +13,7 @@ use crate::json::{ manifest::{ assets::AssetIndex, VersionManifest }, Sha1Sum };
 
 use super::VersionManager;
 
-pub mod progress_reporter;
+pub mod progress;
 pub mod download_job;
 pub mod downloadables;
 pub mod utils;
@@ -22,11 +22,11 @@ pub mod error;
 pub struct ClientDownloader {
   pub concurrent_downloads: usize,
   pub max_download_attempts: usize,
-  pub reporter: Arc<ProgressReporter>,
+  pub reporter: ProgressReporter,
 }
 
 impl ClientDownloader {
-  pub fn new(parallel_downloads: usize, max_download_attempts: usize, reporter: Arc<ProgressReporter>) -> Self {
+  pub fn new(parallel_downloads: usize, max_download_attempts: usize, reporter: ProgressReporter) -> Self {
     Self {
       concurrent_downloads: parallel_downloads,
       max_download_attempts,

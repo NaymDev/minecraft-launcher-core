@@ -5,7 +5,7 @@ use futures::{ stream::iter, StreamExt };
 use log::{ error, info, warn };
 use reqwest::{ header::{ HeaderMap, HeaderValue }, Client, Proxy };
 
-use super::{ downloadables::{ DownloadError, Downloadable }, error::Error, progress_reporter::ProgressReporter };
+use super::{ downloadables::{ DownloadError, Downloadable }, error::Error, progress::{ CallbackReporter, EmptyReporter, ProgressReporter } };
 
 type DownloadableSync = Arc<dyn Downloadable + Send + Sync>;
 
@@ -18,7 +18,7 @@ pub struct DownloadJob {
   max_download_attempts: u8,
 
   // Tracks progress of the entire download job
-  progress_reporter: Arc<ProgressReporter>,
+  progress_reporter: ProgressReporter,
 }
 
 impl Default for DownloadJob {
@@ -32,7 +32,7 @@ impl Default for DownloadJob {
       max_download_attempts: 5,
 
       all_files: vec![],
-      progress_reporter: Arc::default(),
+      progress_reporter: Arc::new(EmptyReporter),
     }
   }
 }
@@ -65,7 +65,7 @@ impl DownloadJob {
     self
   }
 
-  pub fn with_progress_reporter(mut self, progress_reporter: &Arc<ProgressReporter>) -> Self {
+  pub fn with_progress_reporter(mut self, progress_reporter: &ProgressReporter) -> Self {
     self.progress_reporter = Arc::clone(progress_reporter);
     self
   }
@@ -77,20 +77,11 @@ impl DownloadJob {
 
   fn prepare_downloadables(&mut self) -> Vec<DownloadableSync> {
     let all_files: Vec<DownloadableSync> = take(&mut self.all_files).into_iter().map(Arc::from).collect();
+    let monitor = JobMonitor::new(self.progress_reporter.clone(), &all_files);
 
-    let reporter = {
-      let progress_reporter = Arc::clone(&self.progress_reporter);
-      let all_files = all_files.clone();
-      Arc::new(
-        ProgressReporter::new(move |_update| {
-          Self::update_progress(&all_files, &progress_reporter);
-        })
-      )
-    };
-
-    for downloadable in all_files.iter() {
-      downloadable.get_monitor().set_reporter(Arc::clone(&reporter));
-    }
+    all_files.iter().for_each(|downloadable| {
+      downloadable.get_monitor().set_reporter(monitor.download_reporter());
+    });
 
     all_files
   }
@@ -98,10 +89,12 @@ impl DownloadJob {
 
 impl DownloadJob {
   pub async fn start(mut self) -> Result<(), Error> {
-    self.progress_reporter.clear();
+    // self.progress_reporter.clear();
 
     let start_time = Utc::now();
     let downloadables = self.prepare_downloadables();
+
+    self.progress_reporter.setup(&format!("Starting \"{}\"", self.name), None);
     let results = self.run(downloadables).await;
 
     let total_time = Utc::now().signed_duration_since(start_time).num_seconds();
@@ -110,7 +103,7 @@ impl DownloadJob {
       .filter(|r| r.is_err())
       .collect::<Vec<_>>();
 
-    self.progress_reporter.clear();
+    self.progress_reporter.done();
 
     if self.ignore_failures || failures.is_empty() {
       info!("Job '{}' finished successfully (took {}s)", self.name, total_time);
@@ -132,36 +125,6 @@ impl DownloadJob {
 
     // FIXME: currently, this was the only way i've found to make the future returned by the function implement `Send`
     tokio::spawn(iter.collect()).await.unwrap()
-  }
-
-  fn update_progress(all_files: &Vec<DownloadableSync>, progress_reporter: &ProgressReporter) {
-    let mut current_size = 0;
-    let mut total_size = 0;
-
-    let mut displayed_file: Option<&DownloadableSync> = None;
-
-    for file in all_files {
-      current_size += file.get_monitor().get_current();
-      total_size += file.get_monitor().get_total();
-
-      if file.get_end_time().is_none() {
-        // If `file` started first, or if `displayed` has finished during the loop, replace it
-        if let Some(displayed) = displayed_file {
-          if file.get_start_time() >= displayed.get_start_time() && displayed.get_end_time().is_none() {
-            continue;
-          }
-        }
-        displayed_file.replace(file);
-      }
-    }
-
-    if let Some(displayed_file) = displayed_file {
-      let status = displayed_file.get_status();
-      let scaled_current = (((current_size as f64) / (total_size as f64)) * 100.0).ceil();
-      progress_reporter.set(status, scaled_current as u32, 100);
-    } else {
-      progress_reporter.clear();
-    }
   }
 }
 
@@ -214,5 +177,52 @@ async fn download(job_name: String, client: Client, retries: u8, downloadable: D
   match last_error {
     Some(err) => Err(err),
     None => Ok(downloadable),
+  }
+}
+
+#[derive(Clone)]
+pub struct JobMonitor {
+  reporter: ProgressReporter,
+  files: Vec<DownloadableSync>,
+}
+
+impl JobMonitor {
+  pub fn new(reporter: ProgressReporter, files: &[DownloadableSync]) -> Self {
+    Self { reporter, files: files.to_vec() }
+  }
+
+  pub fn fire_update(&self) {
+    let mut current_size = 0;
+    let mut total_size = 0;
+
+    let mut displayed_file: Option<&DownloadableSync> = None;
+
+    for file in &self.files {
+      current_size += file.get_monitor().get_current();
+      total_size += file.get_monitor().get_total();
+
+      if file.get_end_time().is_none() {
+        // If `file` started first, or if `displayed` has finished during the loop, replace it
+        if let Some(displayed) = displayed_file {
+          if file.get_start_time() >= displayed.get_start_time() && displayed.get_end_time().is_none() {
+            continue;
+          }
+        }
+        displayed_file.replace(file);
+      }
+    }
+
+    if let Some(displayed_file) = displayed_file {
+      self.reporter.status(&displayed_file.get_status());
+      self.reporter.total(total_size);
+      self.reporter.progress(current_size);
+    } else {
+      self.reporter.done();
+    }
+  }
+
+  pub fn download_reporter(&self) -> ProgressReporter {
+    let monitor = self.clone();
+    Arc::new(CallbackReporter::new(move |_| monitor.fire_update()))
   }
 }

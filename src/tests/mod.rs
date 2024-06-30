@@ -1,7 +1,7 @@
 use crate::{
   bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
   json::MCVersion,
-  version_manager::{ downloader::progress_reporter::{ ProgressReporter, ProgressUpdate }, VersionManager },
+  version_manager::{ downloader::progress::{ CallbackReporter, Event, ProgressReporter }, VersionManager },
 };
 
 use std::{ env::temp_dir, path::PathBuf, sync::{ Mutex, Arc } };
@@ -87,42 +87,62 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   info!("Attempting to launch the game");
 
-  let progress: Arc<Mutex<Option<(String, u32, u32)>>> = Arc::new(Mutex::new(None));
+  let progress: Arc<Mutex<Option<(String, usize, usize)>>> = Arc::new(Mutex::new(None));
 
-  let reporter = {
+  let reporter: ProgressReporter = {
     let progress = Arc::clone(&progress);
-    ProgressReporter::new(move |update| {
-      if let Ok(mut progress) = progress.lock() {
-        if let ProgressUpdate::Clear = update {
-          progress.take();
-          debug!("Progress hidden");
-        } else {
-          let mut taken = progress.take().unwrap_or_default();
-          match update {
-            ProgressUpdate::SetStatus(status) => {
-              taken.0 = status;
-            }
-            ProgressUpdate::SetProgress(progress) => {
-              taken.1 = progress;
-            }
-            ProgressUpdate::SetTotal(total) => {
-              taken.2 = total;
-            }
-            ProgressUpdate::SetAll(status, progress, total) => {
-              taken = (status, progress, total);
-            }
-            _ => {}
-          }
-          if taken.2 != 0 {
-            let percentage = (((taken.1 as f64) / (taken.2 as f64)) * 20f64).ceil() as usize;
-            let left = 20 - percentage;
-            let bar = format!("[{}{}]", "■".repeat(percentage), "·".repeat(left));
-            debug!("{status} {bar} ({progress}%)", status = taken.0, progress = (((taken.1 as f64) / (taken.2 as f64)) * 100f64).ceil() as u32);
-          }
-          progress.replace(taken);
-        }
+
+    fn print_progress(status: &str, current: usize, total: usize) {
+      let current = current as f64;
+      let total = total as f64;
+      if total != 0f64 {
+        let percentage = ((current / total) * 20f64).ceil() as usize;
+        let left = 20 - percentage;
+        let bar = format!("[{}{}]", "■".repeat(percentage), "·".repeat(left));
+        let progress = (current / total) * 100f64;
+        debug!("{status} {bar} ({current}%)", current = progress.ceil() as u32);
       }
-    })
+    }
+
+    Arc::new(
+      CallbackReporter::new(move |event| {
+        if let Ok(mut progress) = progress.lock() {
+          if let Event::Done = event {
+            progress.take();
+            debug!("Progress hidden");
+          } else {
+            let mut taken = progress.take().unwrap_or_default();
+            match event {
+              Event::Status(status) => {
+                if taken.0 != status {
+                  taken.0 = status;
+                  print_progress(&taken.0, taken.1, taken.2);
+                }
+              }
+              Event::Progress(progress) => {
+                if taken.1 != progress {
+                  taken.1 = progress;
+                  print_progress(&taken.0, progress, taken.2);
+                }
+              }
+              Event::Total(total) => {
+                if taken.2 != total {
+                  taken.2 = total;
+                  print_progress(&taken.0, taken.1, total);
+                }
+              }
+              Event::Setup { status, total } => {
+                taken = (status, 0, total.unwrap_or(0));
+                print_progress(&taken.0, taken.1, taken.2);
+              }
+              _ => {}
+            }
+
+            progress.replace(taken);
+          }
+        }
+      })
+    )
   };
 
   let java_path = PathBuf::from(env!("JAVA_HOME")).join("bin").join("java.exe");
@@ -140,18 +160,19 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .max_concurrent_downloads(32)
     .build()?;
 
-  reporter.set("Fetching version manifest", 0, 2);
+  reporter.setup("Fetching version manifest", Some(2));
   let env_features = game_options.env_features();
   let mut version_manager = VersionManager::load(&game_options.game_dir, &env_features).await?;
 
   info!("Queuing library & version downloads");
-  reporter.set_status("Resolving local version").set_progress(1);
+  reporter.status("Resolving local version");
+  reporter.progress(1);
   let manifest = version_manager.resolve_local_version(&mc_version, true, true).await?;
   if !manifest.applies_to_current_environment(&env_features) {
     return Err(format!("Version {} is is incompatible with the current environment", mc_version).into());
   }
 
-  reporter.clear();
+  reporter.done();
   version_manager.download_required_files(&manifest, game_options.max_concurrent_downloads, game_options.max_download_attempts, &reporter).await?;
 
   let mut game_runner = GameBootstrap::new(game_options);
