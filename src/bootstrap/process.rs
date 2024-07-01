@@ -46,6 +46,19 @@ impl GameProcess {
       Err(_) => Some(1),
     }
   }
+
+  pub fn into_inner(self) -> Child {
+    let mut child = self.child;
+    child.stdout.replace(self.stdout.into_inner());
+    child.stderr.replace(self.stderr.into_inner());
+    child
+  }
+}
+
+impl From<GameProcess> for Child {
+  fn from(val: GameProcess) -> Self {
+    val.into_inner()
+  }
 }
 
 #[derive(Debug, Default)]
