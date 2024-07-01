@@ -68,9 +68,9 @@ pub struct GameOptions {
   pub version_name: Option<String>,
 
   #[builder(default = "16")]
-  pub max_concurrent_downloads: u16,
+  pub max_concurrent_downloads: usize,
   #[builder(default = "5")]
-  pub max_download_attempts: u8,
+  pub max_download_attempts: usize,
 }
 
 impl GameOptions {

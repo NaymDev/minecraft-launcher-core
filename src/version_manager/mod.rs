@@ -255,16 +255,11 @@ impl VersionManager {
   pub async fn download_required_files(
     &self,
     version_manifest: &VersionManifest,
-    max_concurrent_downloads: u16,
-    max_download_attempts: u8,
+    max_concurrent_downloads: usize,
+    max_download_attempts: usize,
     progress_reporter: &ProgressReporter
   ) -> Result<(), downloader::error::Error> {
-    let downloader = ClientDownloader::new(
-      Some(self.client.clone()),
-      max_concurrent_downloads as usize,
-      max_download_attempts as usize,
-      Arc::clone(progress_reporter)
-    );
+    let downloader = ClientDownloader::new(Some(self.client.clone()), max_concurrent_downloads, max_download_attempts, Arc::clone(progress_reporter));
     downloader.download_version(version_manifest, self).await
   }
 }
