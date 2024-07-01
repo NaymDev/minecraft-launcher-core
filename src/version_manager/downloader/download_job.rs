@@ -14,8 +14,8 @@ pub struct DownloadJob {
   client: Client,
   all_files: Vec<Box<dyn Downloadable + Send + Sync>>,
   ignore_failures: bool,
-  concurrent_downloads: u16,
-  max_download_attempts: u8,
+  parallel_downloads: usize,
+  retries: usize,
 
   // Tracks progress of the entire download job
   progress_reporter: ProgressReporter,
@@ -28,8 +28,8 @@ impl Default for DownloadJob {
 
       client: Self::create_http_client(None).unwrap_or_default(),
       ignore_failures: false,
-      concurrent_downloads: 16,
-      max_download_attempts: 5,
+      parallel_downloads: 16,
+      retries: 5,
 
       all_files: vec![],
       progress_reporter: Arc::new(EmptyReporter),
@@ -55,13 +55,13 @@ impl DownloadJob {
     self
   }
 
-  pub fn concurrent_downloads(mut self, concurrent_downloads: u16) -> Self {
-    self.concurrent_downloads = concurrent_downloads;
+  pub fn with_parallel_downloads(mut self, concurrent_downloads: usize) -> Self {
+    self.parallel_downloads = concurrent_downloads;
     self
   }
 
-  pub fn max_download_attempts(mut self, max_download_attempts: u8) -> Self {
-    self.max_download_attempts = max_download_attempts;
+  pub fn with_retries(mut self, max_download_attempts: usize) -> Self {
+    self.retries = max_download_attempts;
     self
   }
 
@@ -115,13 +115,13 @@ impl DownloadJob {
   async fn run(&self, downloads: Vec<DownloadableSync>) -> Vec<Result<DownloadableSync, DownloadError>> {
     let job_name = self.name.clone();
     let client = self.client.clone();
-    let retries = self.max_download_attempts;
-    let concurrent_downloads = self.concurrent_downloads;
+    let retries = self.retries;
+    let parallel_downloads = self.parallel_downloads;
 
     let iter = iter(downloads)
       .map(move |downloadable| (downloadable, job_name.clone(), client.clone(), retries))
       .map(|(downloadable, job_name, client, retries)| download(job_name, client, retries, downloadable))
-      .buffer_unordered(concurrent_downloads as usize);
+      .buffer_unordered(parallel_downloads);
 
     // FIXME: currently, this was the only way i've found to make the future returned by the function implement `Send`
     tokio::spawn(iter.collect()).await.unwrap()
@@ -144,7 +144,7 @@ impl DownloadJob {
   }
 }
 
-async fn download(job_name: String, client: Client, retries: u8, downloadable: DownloadableSync) -> Result<DownloadableSync, DownloadError> {
+async fn download(job_name: String, client: Client, retries: usize, downloadable: DownloadableSync) -> Result<DownloadableSync, DownloadError> {
   if downloadable.get_start_time().is_none() {
     downloadable.set_start_time(Utc::now().timestamp_millis() as u64);
   }

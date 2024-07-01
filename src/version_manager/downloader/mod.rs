@@ -21,18 +21,18 @@ pub mod error;
 
 pub struct ClientDownloader {
   pub client: Client,
-  pub concurrent_downloads: usize,
-  pub max_download_attempts: usize,
+  pub parallel_downloads: Option<usize>,
+  pub retries: Option<usize>,
   pub reporter: ProgressReporter,
 }
 
 impl ClientDownloader {
-  pub fn new(client: Option<Client>, parallel_downloads: usize, max_download_attempts: usize, reporter: ProgressReporter) -> Self {
+  pub fn new(client: Option<Client>, reporter: ProgressReporter, parallel_downloads: Option<usize>, retries: Option<usize>) -> Self {
     Self {
       client: client.unwrap_or(DownloadJob::create_http_client(None).unwrap_or_default()),
-      concurrent_downloads: parallel_downloads,
-      max_download_attempts,
       reporter,
+      parallel_downloads,
+      retries,
     }
   }
 
@@ -102,11 +102,14 @@ impl ClientDownloader {
   }
 
   pub fn create_download_job(&self, name: &str) -> DownloadJob {
-    DownloadJob::new(name)
-      .with_client(self.client.clone())
-      .ignore_failures(false)
-      .concurrent_downloads(self.concurrent_downloads as u16)
-      .max_download_attempts(self.max_download_attempts as u8)
-      .with_progress_reporter(&self.reporter)
+    let mut job = DownloadJob::new(name).with_client(self.client.clone()).ignore_failures(false).with_progress_reporter(&self.reporter);
+    if let Some(parallel_downloads) = self.parallel_downloads {
+      job = job.with_parallel_downloads(parallel_downloads);
+    }
+
+    if let Some(retries) = self.retries {
+      job = job.with_retries(retries);
+    }
+    job
   }
 }

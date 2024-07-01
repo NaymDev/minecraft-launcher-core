@@ -110,7 +110,6 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .java_path(java_path)
     .authentication(UserAuthentication::offline("MonkeyKiller_"))
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
-    .max_concurrent_downloads(32)
     .build()?;
   let env_features = game_options.env_features();
 
@@ -127,7 +126,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
   }
   reporter.done();
 
-  version_manager.download_required_files(&manifest, game_options.max_concurrent_downloads, game_options.max_download_attempts, &reporter).await?;
+  version_manager.download_required_files(&manifest, &reporter, Some(32), None).await?;
 
   let mut game_runner = GameBootstrap::new(game_options);
   let mut process = game_runner.launch_game(&manifest).await?;
