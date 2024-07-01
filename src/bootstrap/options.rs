@@ -43,7 +43,7 @@ impl ProxyOptions {
   }
 }
 
-#[derive(Debug, Builder)]
+#[derive(Debug, Clone, Builder)]
 #[builder(pattern = "owned", setter(strip_option))]
 pub struct GameOptions {
   pub game_dir: PathBuf,
