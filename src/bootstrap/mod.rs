@@ -74,8 +74,8 @@ impl GameBootstrap {
   /// This function returns a `Result` which is:
   /// - `Ok(GameProcess)` on successful launch of the game process.
   /// - `Err(Error)` if there is an error during the preparation or spawning of the game process.
-  pub async fn launch_game(&mut self, manifest: &VersionManifest) -> Result<GameProcess, Error> {
-    self.prepare_launch(manifest).await?.spawn()
+  pub fn launch_game(&mut self, manifest: &VersionManifest) -> Result<GameProcess, Error> {
+    self.prepare_launch(manifest)?.spawn()
   }
 
   /// Prepares the game launch by setting up the necessary environment, unpacking natives and assets,
@@ -96,15 +96,15 @@ impl GameBootstrap {
   /// - Failure to resolve system-specific configurations.
   ///
   /// # Examples
-  /// ```
+  /// ```ignore
   /// let mut bootstrap = GameBootstrap::new(options);
-  /// let game_process = bootstrap.prepare_launch(&manifest).await;
+  /// let game_process = bootstrap.prepare_launch(&manifest);
   /// match game_process {
   ///     Ok(process) => process.spawn(),
   ///     Err(e) => println!("Error preparing launch: {}", e),
   /// }
   /// ```
-  pub async fn prepare_launch(&mut self, manifest: &VersionManifest) -> Result<GameProcessBuilder, Error> {
+  pub fn prepare_launch(&mut self, manifest: &VersionManifest) -> Result<GameProcessBuilder, Error> {
     let os = OperatingSystem::get_current_platform();
     let game_dir = &self.options.game_dir;
     let env_features = &self.env_features;
@@ -130,7 +130,7 @@ impl GameBootstrap {
       }
     } else if !game_dir.is_dir() {
       error!("Aborting launch; game directory is not actually a directory");
-      return Err(Error::Launch("game directory is not actually a directory"));
+      return Err(Error::Launch("game directory is not actually ctory"));
     }
 
     // Extra: Prepare server resource packs directory

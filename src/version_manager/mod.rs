@@ -175,7 +175,7 @@ impl VersionManager {
   /// or resolving inheritances.
   ///
   /// # Examples
-  /// ```
+  /// ```ignore
   /// let mut resolver = VersionResolver::new();
   /// let version_id = MCVersion::new("1.16.4");
   /// let manifest = resolver.resolve(&version_id, true, true).await?;

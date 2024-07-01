@@ -129,7 +129,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
   version_manager.download_required_files(&manifest, &reporter, Some(32), None).await?;
 
   let mut game_runner = GameBootstrap::new(game_options);
-  let mut process = game_runner.launch_game(&manifest).await?;
+  let mut process = game_runner.launch_game(&manifest)?;
 
   let start_time = Utc::now();
   let (status, child) = loop {
