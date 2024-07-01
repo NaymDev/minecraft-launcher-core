@@ -17,7 +17,7 @@ pub struct RawVersionList {
 
 impl RawVersionList {
   /// Fetches the version manifest from Mojang's servers.
-  pub async fn fetch() -> Result<RawVersionList, LoadVersionError> {
-    Ok(Client::new().get(VERSION_MANIFEST_URL).send().await?.json::<RawVersionList>().await?)
+  pub async fn fetch(client: &Client) -> Result<RawVersionList, LoadVersionError> {
+    Ok(client.get(VERSION_MANIFEST_URL).send().await?.json::<RawVersionList>().await?)
   }
 }

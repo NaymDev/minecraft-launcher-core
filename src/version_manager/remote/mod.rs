@@ -1,5 +1,6 @@
 use std::io::Cursor;
 
+use reqwest::Client;
 use serde::{ Deserialize, Serialize };
 
 use crate::json::{ manifest::VersionManifest, Date, MCVersion, ReleaseType, Sha1Sum, VersionInfo };
@@ -37,8 +38,8 @@ impl RemoteVersionInfo {
     self.compliance_level
   }
 
-  pub async fn fetch(&self) -> Result<VersionManifest, InstallVersionError> {
-    let bytes = reqwest::get(&self.url).await?.bytes().await?;
+  pub async fn fetch(&self, client: &Client) -> Result<VersionManifest, InstallVersionError> {
+    let bytes = client.get(&self.url).send().await?.error_for_status()?.bytes().await?;
     let sha1 = Sha1Sum::from_reader(&mut Cursor::new(&bytes)).map_err(InstallVersionError::ChecksumError)?;
     if sha1 != self.sha1 {
       return Err(InstallVersionError::ChecksumMismatch { expected: self.sha1.clone(), actual: sha1 });

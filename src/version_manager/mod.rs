@@ -1,9 +1,10 @@
 use std::{ collections::{ HashMap, HashSet }, fs::{ self, create_dir_all, read_dir, File }, path::{ Path, PathBuf }, sync::Arc };
 
-use downloader::{ progress::ProgressReporter, ClientDownloader };
+use downloader::{ download_job::DownloadJob, progress::ProgressReporter, ClientDownloader };
 use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
 use log::{ error, info, warn };
 use remote::{ RawVersionList, RemoteVersionInfo };
+use reqwest::Client;
 use utils::resolve;
 
 use crate::json::{ manifest::{ rule::OperatingSystem, VersionManifest }, EnvironmentFeatures, MCVersion, VersionInfo };
@@ -18,6 +19,7 @@ mod utils;
 pub struct VersionManager {
   pub game_dir: PathBuf,
   pub env_features: EnvironmentFeatures,
+  pub client: Client,
 
   local_cache: Vec<MCVersion>,
   remote_cache: Option<RawVersionList>,
@@ -28,10 +30,12 @@ pub struct VersionManager {
 impl VersionManager {
   /// Create an empty version manager
   /// You must call `VersionManager::refresh` before using it
-  pub fn new(game_dir: &Path, env_features: &EnvironmentFeatures) -> Self {
+  pub fn new(game_dir: &Path, env_features: &EnvironmentFeatures, client: Option<Client>) -> Self {
     Self {
       game_dir: game_dir.to_path_buf(),
       env_features: env_features.clone(),
+      client: client.unwrap_or(DownloadJob::create_http_client(None).unwrap_or_default()),
+
       local_cache: vec![],
       remote_cache: None,
       resolved_versions_cache: HashMap::new(),
@@ -40,8 +44,8 @@ impl VersionManager {
 
   /// Loads the version manager with the provided game directory and environment features.
   /// Creates the version manager and refreshes it
-  pub async fn load(game_dir: &Path, env_features: &EnvironmentFeatures) -> Result<Self, LoadVersionError> {
-    let mut version_manager = Self::new(game_dir, env_features);
+  pub async fn load(game_dir: &Path, env_features: &EnvironmentFeatures, client: Option<Client>) -> Result<Self, LoadVersionError> {
+    let mut version_manager = Self::new(game_dir, env_features, client);
     version_manager.refresh().await?;
     Ok(version_manager)
   }
@@ -98,7 +102,7 @@ impl VersionManager {
 
 impl VersionManager {
   pub async fn refresh(&mut self) -> Result<(), LoadVersionError> {
-    self.remote_cache.replace(RawVersionList::fetch().await?);
+    self.remote_cache.replace(RawVersionList::fetch(&self.client).await?);
     self.refresh_local_versions()?;
     Ok(())
   }
@@ -215,7 +219,7 @@ impl VersionManager {
     let target_dir = self.versions_dir().join(&version_id);
     let target_json = target_dir.join(format!("{}.json", &version_id));
 
-    let bytes = reqwest::get(remote_version.get_url()).await?.error_for_status()?.bytes().await?;
+    let bytes = self.client.get(remote_version.get_url()).send().await?.error_for_status()?.bytes().await?;
     create_dir_all(&target_dir)?;
     fs::write(target_json, &bytes)?;
     let version_manifest: VersionManifest = serde_json::from_slice(&bytes)?;
@@ -255,7 +259,12 @@ impl VersionManager {
     max_download_attempts: u8,
     progress_reporter: &ProgressReporter
   ) -> Result<(), downloader::error::Error> {
-    let downloader = ClientDownloader::new(max_concurrent_downloads as usize, max_download_attempts as usize, Arc::clone(progress_reporter));
+    let downloader = ClientDownloader::new(
+      Some(self.client.clone()),
+      max_concurrent_downloads as usize,
+      max_download_attempts as usize,
+      Arc::clone(progress_reporter)
+    );
     downloader.download_version(version_manifest, self).await
   }
 }

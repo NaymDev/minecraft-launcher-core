@@ -20,14 +20,16 @@ pub mod utils;
 pub mod error;
 
 pub struct ClientDownloader {
+  pub client: Client,
   pub concurrent_downloads: usize,
   pub max_download_attempts: usize,
   pub reporter: ProgressReporter,
 }
 
 impl ClientDownloader {
-  pub fn new(parallel_downloads: usize, max_download_attempts: usize, reporter: ProgressReporter) -> Self {
+  pub fn new(client: Option<Client>, parallel_downloads: usize, max_download_attempts: usize, reporter: ProgressReporter) -> Self {
     Self {
+      client: client.unwrap_or(DownloadJob::create_http_client(None).unwrap_or_default()),
       concurrent_downloads: parallel_downloads,
       max_download_attempts,
       reporter,
@@ -51,7 +53,7 @@ impl ClientDownloader {
     if let Ok(file) = File::open(&index_file) {
       Ok(serde_json::from_reader(file).map_err(|err| DownloadError::Other(Box::new(err)))?)
     } else {
-      let response = Client::new().get(&index_info.url).send().await?.error_for_status()?;
+      let response = self.client.get(&index_info.url).send().await?.error_for_status()?;
       let bytes = response.bytes().await?;
       fs::write(&index_file, &bytes).map_err(DownloadError::WriteFile)?;
 
@@ -101,6 +103,7 @@ impl ClientDownloader {
 
   pub fn create_download_job(&self, name: &str) -> DownloadJob {
     DownloadJob::new(name)
+      .with_client(self.client.clone())
       .ignore_failures(false)
       .concurrent_downloads(self.concurrent_downloads as u16)
       .max_download_attempts(self.max_download_attempts as u8)

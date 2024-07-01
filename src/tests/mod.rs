@@ -1,13 +1,18 @@
 use crate::{
   bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
   json::{ EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo },
-  version_manager::{ downloader::progress::{ CallbackReporter, Event, ProgressReporter }, remote::RawVersionList, VersionManager },
+  version_manager::{
+    downloader::{ download_job::DownloadJob, progress::{ CallbackReporter, Event, ProgressReporter } },
+    remote::RawVersionList,
+    VersionManager,
+  },
 };
 
 use std::{ collections::HashMap, env::temp_dir, path::PathBuf, sync::{ Arc, Mutex } };
 use chrono::{ Duration, Timelike, Utc };
 use futures::{ stream, StreamExt };
 use log::{ debug, error, info, trace, LevelFilter };
+use reqwest::Client;
 use simple_logger::SimpleLogger;
 
 pub fn setup_logger() {
@@ -77,7 +82,7 @@ async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
   let mc_version = MCVersion::new("1.20.1");
   let game_dir = temp_dir().join(".minecraft-test-rust");
 
-  let mut version_manager = VersionManager::load(&game_dir, &EnvironmentFeatures::default()).await?;
+  let mut version_manager = VersionManager::load(&game_dir, &EnvironmentFeatures::default(), None).await?;
   let resolved = version_manager.resolve_local_version(&mc_version, true, false).await?;
   info!("Resolved: {:?}", resolved);
   Ok(())
@@ -110,7 +115,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
   let env_features = game_options.env_features();
 
   reporter.setup("Fetching version manifest", Some(2));
-  let mut version_manager = VersionManager::load(&game_options.game_dir, &env_features).await?;
+  let mut version_manager = VersionManager::load(&game_options.game_dir, &env_features, None).await?;
 
   info!("Queuing library & version downloads");
   reporter.status("Resolving local version");
@@ -162,7 +167,9 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
   setup_logger();
 
-  let versions = RawVersionList::fetch().await?
+  let client = DownloadJob::create_http_client(None).unwrap_or_default();
+
+  let versions = RawVersionList::fetch(&client).await?
     .versions.into_iter()
     .filter(|v| v.get_type() != &ReleaseType::Snapshot)
     .enumerate()
@@ -174,7 +181,7 @@ async fn test_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
     ::iter(versions)
     .map(|(i, remote)| async move {
       let id = remote.get_id();
-      let result = remote.fetch().await;
+      let result = remote.fetch(&Client::new()).await;
       if result.is_ok() {
         info!(" - Parse version {} ({}/{}): SUCCESS", id, i + 1, count);
       } else {
