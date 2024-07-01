@@ -10,8 +10,6 @@ use futures::{ stream, StreamExt };
 use log::{ debug, error, info, trace, LevelFilter };
 use simple_logger::SimpleLogger;
 
-mod minecraft_version;
-
 pub fn setup_logger() {
   SimpleLogger::new().env().with_level(LevelFilter::Debug).init().unwrap();
 }
