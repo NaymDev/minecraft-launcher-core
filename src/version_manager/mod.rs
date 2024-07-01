@@ -1,4 +1,4 @@
-use std::{ collections::{ HashMap, HashSet }, fs::{ create_dir_all, read_dir, File }, path::{ Path, PathBuf }, sync::Arc };
+use std::{ collections::{ HashMap, HashSet }, fs::{ self, create_dir_all, read_dir, File }, path::{ Path, PathBuf }, sync::Arc };
 
 use downloader::{ progress::ProgressReporter, ClientDownloader };
 use error::{ InstallVersionError, LoadVersionError, ResolveManifestError };
@@ -211,13 +211,14 @@ impl VersionManager {
   }
 
   pub async fn install_version(&mut self, remote_version: &RemoteVersionInfo) -> Result<VersionManifest, InstallVersionError> {
-    let version_manifest = remote_version.fetch().await?;
-    let version_id = version_manifest.get_id().to_string();
-
+    let version_id = remote_version.get_id().to_string();
     let target_dir = self.versions_dir().join(&version_id);
-    create_dir_all(&target_dir)?;
     let target_json = target_dir.join(format!("{}.json", &version_id));
-    serde_json::to_writer_pretty(&File::create(target_json)?, &version_manifest)?;
+
+    let bytes = reqwest::get(remote_version.get_url()).await?.error_for_status()?.bytes().await?;
+    create_dir_all(&target_dir)?;
+    fs::write(target_json, &bytes)?;
+    let version_manifest: VersionManifest = serde_json::from_slice(&bytes)?;
 
     self.local_cache.push(version_manifest.get_id().clone());
     Ok(version_manifest)
