@@ -11,7 +11,7 @@ use log::{ debug, error, info, trace, LevelFilter };
 use simple_logger::SimpleLogger;
 
 pub fn setup_logger() {
-  SimpleLogger::new().env().with_level(LevelFilter::Debug).init().unwrap();
+  let _ = SimpleLogger::new().env().with_level(LevelFilter::Debug).init();
 }
 
 pub fn create_progress_reporter() -> ProgressReporter {
@@ -73,10 +73,13 @@ pub fn create_progress_reporter() -> ProgressReporter {
 #[tokio::test]
 async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
   setup_logger();
-  let mut version_manager = VersionManager::load(&temp_dir().join(".minecraft-test-rust"), &EnvironmentFeatures::default()).await?;
-  let local = version_manager.install_version_by_id(&MCVersion::from("1.20.1".to_string())).await?;
-  let resolved = version_manager.resolve_inheritances(local).await?;
-  info!("Resolved: {:#?}", resolved);
+
+  let mc_version = MCVersion::new("1.20.1");
+  let game_dir = temp_dir().join(".minecraft-test-rust");
+
+  let mut version_manager = VersionManager::load(&game_dir, &EnvironmentFeatures::default()).await?;
+  let resolved = version_manager.resolve_local_version(&mc_version, true, false).await?;
+  info!("Resolved: {:?}", resolved);
   Ok(())
 }
 
@@ -84,7 +87,7 @@ async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
   setup_logger();
 
-  let mc_version = MCVersion::new("1.8.9");
+  let mc_version = MCVersion::new("1.20.1");
 
   let game_dir = temp_dir().join(".minecraft-core-test");
   let natives_dir = game_dir.join("versions").join(mc_version.to_string()).join(format!("{}-natives-{}", mc_version, Utc::now().nanosecond()));
@@ -113,7 +116,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
   reporter.status("Resolving local version");
   reporter.progress(1);
 
-  let manifest = version_manager.resolve_local_version(&mc_version, true, true).await?;
+  let manifest = version_manager.resolve_local_version(&mc_version, true, false).await?;
   if !manifest.applies_to_current_environment(&env_features) {
     return Err(format!("Version {} is is incompatible with the current environment", mc_version).into());
   }
@@ -123,15 +126,17 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   let mut game_runner = GameBootstrap::new(game_options);
   let mut process = game_runner.launch_game(&manifest).await?;
+
   let start_time = Utc::now();
-  let status = loop {
+  let (status, child) = loop {
     if let Some(status) = process.exit_status() {
-      break Some(status);
+      let child = process.into_inner();
+      break (Some(status), child);
     }
     if Utc::now() - start_time > Duration::seconds(15) {
       let mut child = process.into_inner();
       child.kill()?;
-      break None;
+      break (None, child);
     }
   };
 
@@ -140,7 +145,16 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
       info!("Game exited successfully with code 0");
       Ok(())
     }
-    Some(code) => { Err(format!("Game exited with code {code}").into()) }
+    Some(code) => {
+      error!("================================================================");
+      if let Ok(output) = child.wait_with_output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!("Game exited with code {code}:\n{stdout}\n{stderr}");
+      }
+      error!("================================================================");
+      Err(format!("Game exited with code {code}").into())
+    }
   }
 }
 
@@ -166,24 +180,24 @@ async fn test_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
       } else {
         error!(" - Parse version {} ({}/{}): FAILED", id, i + 1, count);
       }
-      (id.clone(), result)
+      (id.clone(), result.err())
     })
-    .buffer_unordered(5)
+    .buffer_unordered(32)
     .collect::<Vec<_>>().await;
 
   let failures = results
     .into_iter()
-    .filter_map(|(id, result)| result.err().map(|e| (id, e)))
+    .filter_map(|(id, err)| err.map(|e| (id, e)))
     .collect::<HashMap<_, _>>();
 
   if failures.is_empty() {
     info!("All versions parsed successfully");
+    Ok(())
   } else {
     error!("Failed to parse {} versions: ", failures.len());
-    for (id, error) in failures {
+    for (id, error) in &failures {
       error!("  - {id}: {error}");
     }
+    Err(format!("Failed to parse {} versions: ", failures.len()).into())
   }
-
-  Ok(())
 }
