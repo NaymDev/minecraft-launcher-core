@@ -61,7 +61,50 @@ impl GameBootstrap {
 }
 
 impl GameBootstrap {
+  /// Launches a game based on the provided version manifest.
+  ///
+  /// This function prepares the game launch by setting up necessary configurations
+  /// and then spawns the game process.
+  ///
+  /// # Arguments
+  /// * `manifest` - A reference to the `VersionManifest` which contains all the necessary
+  ///   information to launch the correct version of the game.
+  ///
+  /// # Returns
+  /// This function returns a `Result` which is:
+  /// - `Ok(GameProcess)` on successful launch of the game process.
+  /// - `Err(Error)` if there is an error during the preparation or spawning of the game process.
   pub async fn launch_game(&mut self, manifest: &VersionManifest) -> Result<GameProcess, Error> {
+    self.prepare_launch(manifest).await?.spawn()
+  }
+
+  /// Prepares the game launch by setting up the necessary environment, unpacking natives and assets,
+  /// and configuring the game process.
+  ///
+  /// # Arguments
+  /// * `manifest` - A reference to the `VersionManifest` which contains information about the game version.
+  ///
+  /// # Returns
+  /// A `Result` which is either:
+  /// - `Ok(GameProcessBuilder)` - A `GameProcessBuilder` instance ready to start the game process.
+  /// - `Err(Error)` - An error occurred during the setup process.
+  ///
+  /// # Errors
+  /// This function can return an `Error` in several cases, including:
+  /// - Failure to unpack natives or assets.
+  /// - Failure to create the game directory.
+  /// - Failure to resolve system-specific configurations.
+  ///
+  /// # Examples
+  /// ```
+  /// let mut bootstrap = GameBootstrap::new(options);
+  /// let game_process = bootstrap.prepare_launch(&manifest).await;
+  /// match game_process {
+  ///     Ok(process) => process.spawn(),
+  ///     Err(e) => println!("Error preparing launch: {}", e),
+  /// }
+  /// ```
+  pub async fn prepare_launch(&mut self, manifest: &VersionManifest) -> Result<GameProcessBuilder, Error> {
     let os = OperatingSystem::get_current_platform();
     let game_dir = &self.options.game_dir;
     let env_features = &self.env_features;
@@ -205,7 +248,7 @@ impl GameBootstrap {
         .for_each(|arg| debug!("Unresolved variable - {:?}", arg.as_str()));
     }
 
-    game_process_builder.spawn()
+    Ok(game_process_builder)
   }
 
   fn unpack_natives(&self, manifest: &VersionManifest) -> Result<(), UnpackNativesError> {

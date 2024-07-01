@@ -63,9 +63,9 @@ impl From<GameProcess> for Child {
 
 #[derive(Debug, Default)]
 pub struct GameProcessBuilder {
-  arguments: Vec<String>,
-  java_path: Option<PathBuf>,
-  directory: Option<PathBuf>,
+  pub arguments: Vec<String>,
+  pub java_path: Option<PathBuf>,
+  pub directory: Option<PathBuf>,
 }
 
 impl GameProcessBuilder {
