@@ -1,7 +1,7 @@
 use std::{ path::PathBuf, collections::HashMap, fmt::Debug };
 
 use derive_builder::Builder;
-use serde_json::Value;
+use serde_json::json;
 
 use crate::json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures };
 use super::auth::UserAuthentication;
@@ -83,12 +83,11 @@ impl GameOptions {
   pub fn env_features(&self) -> EnvironmentFeatures {
     let mut env_features = EnvironmentFeatures::new();
     if let Some(demo) = self.demo {
-      env_features.set_feature(RuleFeatureType::IsDemoUser, Value::Bool(demo));
+      env_features.set_feature(RuleFeatureType::IsDemoUser, json!(demo));
     }
     if self.resolution.is_some() {
-      env_features.set_feature(RuleFeatureType::HasCustomResolution, Value::Bool(true));
+      env_features.set_feature(RuleFeatureType::HasCustomResolution, json!(true));
     }
-    // TODO:
     env_features
   }
 }
