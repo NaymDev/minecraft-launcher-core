@@ -266,25 +266,3 @@ impl VersionManager {
     required_files.iter().all(|file| self.game_dir.join(file).is_file())
   }
 }
-
-#[cfg(test)]
-mod tests {
-  use std::env::temp_dir;
-
-  use simple_logger::SimpleLogger;
-
-  use super::*;
-
-  #[tokio::test]
-  async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
-    SimpleLogger::new().init().unwrap();
-    let mut version_manager = VersionManager::load(&temp_dir().join(".minecraft-test-rust"), &EnvironmentFeatures::default()).await?;
-    info!("{:#?}", version_manager.local_cache);
-    let local = version_manager.get_installed_version(&MCVersion::from("1.20.1-forge-47.2.0".to_string()));
-    if let Ok(local) = local {
-      let resolved = version_manager.resolve_inheritances(local).await?;
-      info!("Resolved: {:#?}", resolved);
-    }
-    Ok(())
-  }
-}

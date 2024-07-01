@@ -1,17 +1,34 @@
 use crate::{
   bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
-  json::MCVersion,
-  version_manager::{ downloader::progress::{ CallbackReporter, Event, ProgressReporter }, VersionManager },
+  json::{ EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo },
+  version_manager::{ downloader::progress::{ CallbackReporter, Event, ProgressReporter }, remote::RawVersionList, VersionManager },
 };
 
-use std::{ env::temp_dir, path::PathBuf, sync::{ Mutex, Arc } };
+use std::{ collections::HashMap, env::temp_dir, path::PathBuf, sync::{ Arc, Mutex } };
 use chrono::{ Timelike, Utc };
-use log::{ debug, info, trace, LevelFilter };
+use futures::{ stream, StreamExt };
+use log::{ debug, error, info, trace, LevelFilter };
 use simple_logger::SimpleLogger;
+
+mod minecraft_version;
+
+pub fn setup_logger() {
+  SimpleLogger::new().env().with_level(LevelFilter::Debug).init().unwrap();
+}
+
+#[tokio::test]
+async fn test_version_manager() -> Result<(), Box<dyn std::error::Error>> {
+  setup_logger();
+  let mut version_manager = VersionManager::load(&temp_dir().join(".minecraft-test-rust"), &EnvironmentFeatures::default()).await?;
+  let local = version_manager.install_version_by_id(&MCVersion::from("1.20.1".to_string())).await?;
+  let resolved = version_manager.resolve_inheritances(local).await?;
+  info!("Resolved: {:#?}", resolved);
+  Ok(())
+}
 
 #[tokio::test]
 async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
-  SimpleLogger::new().env().with_level(LevelFilter::Debug).init().unwrap();
+  setup_logger();
 
   trace!("Commencing testing game");
 
@@ -116,6 +133,50 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     }
   };
   info!("Game exited with status: {status}");
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn test_version_parsing() -> Result<(), Box<dyn std::error::Error>> {
+  setup_logger();
+
+  let versions = RawVersionList::fetch().await?
+    .versions.into_iter()
+    .filter(|v| v.get_type() != &ReleaseType::Snapshot)
+    .enumerate()
+    .collect::<Vec<_>>();
+
+  let count = versions.len();
+  info!("Attempting to parse {} versions", count);
+  let results = stream
+    ::iter(versions)
+    .map(|(i, remote)| async move {
+      let id = remote.get_id();
+      let result = remote.fetch().await;
+      if result.is_ok() {
+        info!(" - Parse version {} ({}/{}): SUCCESS", id, i + 1, count);
+      } else {
+        error!(" - Parse version {} ({}/{}): FAILED", id, i + 1, count);
+      }
+      (id.clone(), result)
+    })
+    .buffer_unordered(5)
+    .collect::<Vec<_>>().await;
+
+  let failures = results
+    .into_iter()
+    .filter_map(|(id, result)| result.err().map(|e| (id, e)))
+    .collect::<HashMap<_, _>>();
+
+  if failures.is_empty() {
+    info!("All versions parsed successfully");
+  } else {
+    error!("Failed to parse {} versions: ", failures.len());
+    for (id, error) in failures {
+      error!("  - {id}: {error}");
+    }
+  }
 
   Ok(())
 }
