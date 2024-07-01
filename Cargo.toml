@@ -3,7 +3,11 @@ name = "minecraft-launcher-core"
 version = "2.0.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["json", "bootstrap", "version_manager"]
+json = []
+bootstrap = []
+version_manager = []
 
 [dependencies]
 async-recursion = "1.0.5"
