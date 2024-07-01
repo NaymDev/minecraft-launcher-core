@@ -7,78 +7,11 @@ use crate::{
 use std::{ env::temp_dir, path::PathBuf, sync::{ Mutex, Arc } };
 use chrono::{ Timelike, Utc };
 use log::{ debug, info, trace, LevelFilter };
-use log4rs::{
-  config::{ Appender, Root, Logger },
-  append::{
-    console::ConsoleAppender,
-    rolling_file::{ RollingFileAppender, policy::compound::{ CompoundPolicy, trigger::Trigger, roll::fixed_window::FixedWindowRoller } },
-  },
-  encode::pattern::PatternEncoder,
-  Config,
-};
-
-#[derive(Debug)]
-struct StartupTrigger {
-  ran: Mutex<bool>,
-}
-
-impl StartupTrigger {
-  fn new() -> Self {
-    Self {
-      ran: Mutex::new(false),
-    }
-  }
-}
-
-impl Trigger for StartupTrigger {
-  fn trigger(&self, file: &log4rs::append::rolling_file::LogFile) -> anyhow::Result<bool> {
-    if *self.ran.lock().unwrap() {
-      Ok(false)
-    } else {
-      *self.ran.lock().unwrap() = true;
-      Ok(file.len_estimate() > 0)
-    }
-  }
-}
+use simple_logger::SimpleLogger;
 
 #[tokio::test]
 async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
-  let stdout = ConsoleAppender::builder()
-    .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}")))
-    .build();
-  let mclc_stdout = ConsoleAppender::builder()
-    .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)} {l}]: {m}{n}")))
-    .build();
-
-  let date = Utc::now().format("%Y-%m-%d").to_string();
-
-  let mclc_rolling_file = RollingFileAppender::builder()
-    .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}")))
-    .build(
-      "log/latest.log",
-      Box::new(
-        CompoundPolicy::new(
-          Box::new(StartupTrigger::new()),
-          // Box::new(SizeTrigger::new(10 * 1024 * 1024)), // 10 MB
-          Box::new(FixedWindowRoller::builder().build(&format!("log/{date}-{{}}.log.gz"), 3).unwrap())
-        )
-      )
-    )?;
-
-  let minecraft_launcher_core = Logger::builder()
-    .appender("mclc_stdout")
-    .appender("mclc_rolling_file")
-    .additive(false)
-    .build("minecraft_launcher_core", LevelFilter::Debug);
-
-  let config = Config::builder()
-    .appender(Appender::builder().build("stdout", Box::new(stdout)))
-    .appender(Appender::builder().build("mclc_stdout", Box::new(mclc_stdout)))
-    .appender(Appender::builder().build("mclc_rolling_file", Box::new(mclc_rolling_file)))
-    .logger(minecraft_launcher_core)
-    .build(Root::builder().appender("stdout").build(LevelFilter::Debug))?;
-
-  log4rs::init_config(config).unwrap();
+  SimpleLogger::new().env().with_level(LevelFilter::Debug).init().unwrap();
 
   trace!("Commencing testing game");
 
