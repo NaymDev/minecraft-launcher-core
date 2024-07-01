@@ -46,25 +46,36 @@ impl ProxyOptions {
 #[derive(Debug, Clone, Builder)]
 #[builder(pattern = "owned", setter(strip_option))]
 pub struct GameOptions {
+  /// Path to the Java executable
+  pub java_path: PathBuf,
+  /// Path to the game directory
   pub game_dir: PathBuf,
+  /// Path to the natives directory
   pub natives_dir: PathBuf,
+
+  /// The user authentication
+  pub authentication: UserAuthentication,
+
+  #[builder(default)]
+  pub resolution: Option<(u32, u32)>,
+  #[builder(default)]
+  pub demo: Option<bool>,
 
   #[builder(default)]
   pub proxy: ProxyOptions,
-  #[builder(default)]
-  pub resolution: Option<(u32, u32)>,
-  pub java_path: PathBuf,
-  pub authentication: UserAuthentication,
-  #[builder(default)]
-  pub demo: Option<bool>,
-  #[builder(default)]
-  pub launcher_options: Option<LauncherOptions>,
-  #[builder(default)]
-  pub substitutor_overrides: HashMap<String, String>,
-  #[builder(default)]
-  pub jvm_args: Option<Vec<String>>,
 
   #[builder(default)]
+  pub launcher_options: Option<LauncherOptions>,
+
+  #[builder(default)]
+  /// Overrides the default arguments applied to the JVM
+  pub jvm_args: Option<Vec<String>>,
+  #[builder(default)]
+  /// Custom substitution rules applied to the JVM and game argument variables
+  pub substitutor_overrides: HashMap<String, String>,
+
+  #[builder(default)]
+  /// The name of the version displayed inside the game (id of the version by default)
   pub version_name: Option<String>,
 }
 
