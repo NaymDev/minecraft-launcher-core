@@ -6,23 +6,6 @@ use serde_json::Value;
 use crate::json::{ manifest::rule::RuleFeatureType, EnvironmentFeatures };
 use super::auth::UserAuthentication;
 
-#[derive(Debug, Clone, Copy)]
-pub struct MinecraftResolution(u32, u32);
-
-impl MinecraftResolution {
-  pub fn new(width: u32, height: u32) -> Self {
-    Self(width, height)
-  }
-
-  pub fn width(&self) -> u32 {
-    self.0
-  }
-
-  pub fn height(&self) -> u32 {
-    self.1
-  }
-}
-
 #[derive(Debug, Clone)]
 pub struct LauncherOptions {
   pub launcher_name: String,
@@ -69,7 +52,7 @@ pub struct GameOptions {
   #[builder(default)]
   pub proxy: ProxyOptions,
   #[builder(default)]
-  pub resolution: Option<MinecraftResolution>,
+  pub resolution: Option<(u32, u32)>,
   pub java_path: PathBuf,
   pub authentication: UserAuthentication,
   #[builder(default)]

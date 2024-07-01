@@ -423,9 +423,9 @@ impl GameBootstrap {
       .add("assets_index_name", asset_index_info.map(|info| info.id.as_str()).unwrap_or_default())
       .add("version_type", manifest.get_type().get_name());
 
-    if let Some(resolution) = &self.options.resolution {
-      substitutor.add("resolution_width", resolution.width().to_string());
-      substitutor.add("resolution_height", resolution.height().to_string());
+    if let Some((width, height)) = &self.options.resolution {
+      substitutor.add("resolution_width", width.to_string());
+      substitutor.add("resolution_height", height.to_string());
     } else {
       substitutor.add("resolution_width", "");
       substitutor.add("resolution_height", "");
