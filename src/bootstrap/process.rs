@@ -1,4 +1,4 @@
-use std::{ io::BufReader, os::windows::process::CommandExt, path::{ Path, PathBuf }, process::{ Child, ChildStderr, ChildStdout, Command, Stdio } };
+use std::{ io::BufReader, path::{ Path, PathBuf }, process::{ Child, ChildStderr, ChildStdout, Command, Stdio } };
 
 use crate::json::manifest::rule::OperatingSystem;
 
@@ -12,14 +12,7 @@ pub struct GameProcess {
 
 impl GameProcess {
   pub fn new(java_path: &PathBuf, game_dir: &PathBuf, args: Vec<String>) -> Self {
-    let mut child = Command::new(java_path)
-      .stdout(Stdio::piped())
-      .stderr(Stdio::piped())
-      .current_dir(game_dir)
-      .args(args)
-      .creation_flags(0x08000000)
-      .spawn()
-      .unwrap();
+    let mut child = Command::new(java_path).stdout(Stdio::piped()).stderr(Stdio::piped()).current_dir(game_dir).args(args).spawn().unwrap();
     Self {
       stdout: BufReader::new(child.stdout.take().unwrap()),
       stderr: BufReader::new(child.stderr.take().unwrap()),
