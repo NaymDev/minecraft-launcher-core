@@ -55,6 +55,7 @@ impl ClientDownloader {
     } else {
       let response = self.client.get(&index_info.url).send().await?.error_for_status()?;
       let bytes = response.bytes().await?;
+      fs::create_dir_all(&indexes_dir).map_err(DownloadError::WriteFile)?;
       fs::write(&index_file, &bytes).map_err(DownloadError::WriteFile)?;
 
       let mut sha1 = Sha1::new();
