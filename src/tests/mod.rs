@@ -1,5 +1,6 @@
 use crate::{
   bootstrap::{ auth::UserAuthentication, options::{ GameOptionsBuilder, LauncherOptions, ProxyOptions }, GameBootstrap },
+  java_manager::JavaRuntimeManager,
   json::{ EnvironmentFeatures, MCVersion, ReleaseType, VersionInfo },
   version_manager::{
     downloader::{ download_job::DownloadJob, progress::{ CallbackReporter, Event, ProgressReporter } },
@@ -96,14 +97,20 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
 
   let game_dir = temp_dir().join(".minecraft-core-test");
   let natives_dir = game_dir.join("versions").join(mc_version.to_string()).join(format!("{}-natives-{}", mc_version, Utc::now().nanosecond()));
-  let java_path = PathBuf::from(env!("JAVA_HOME")).join("bin").join("java.exe");
+  let objects_dir = &game_dir.join("assets").join("objects");
+
+  let java_path = if let Ok(java_home) = std::env::var("JAVA_HOME") {
+    PathBuf::from(java_home).join("bin").join("java.exe")
+  } else {
+    PathBuf::default()
+  };
   let reporter = create_progress_reporter();
 
   trace!("Commencing testing game");
   info!("Game dir: {game_dir:?}");
   info!("Attempting to launch the game");
 
-  let game_options = GameOptionsBuilder::default()
+  let mut game_options = GameOptionsBuilder::default()
     .game_dir(game_dir)
     .natives_dir(natives_dir)
     .proxy(ProxyOptions::NoProxy)
@@ -111,6 +118,7 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     .authentication(UserAuthentication::offline("MonkeyKiller_"))
     .launcher_options(LauncherOptions::new("Test Launcher", "v1.0.0"))
     .build()?;
+  let client = DownloadJob::create_http_client(None).unwrap_or_default();
   let env_features = game_options.env_features();
 
   reporter.setup("Fetching version manifest", Some(2));
@@ -125,6 +133,15 @@ async fn test_game() -> Result<(), Box<dyn std::error::Error>> {
     return Err(format!("Version {} is is incompatible with the current environment", mc_version).into());
   }
   reporter.done();
+
+  debug!("Installing java runtime");
+  let runtime_manager = JavaRuntimeManager::load(&game_options.game_dir.join("runtimes"), &client).await?;
+
+  let component = &manifest.java_version.as_ref().unwrap().component;
+  runtime_manager.install_runtime(objects_dir, component, &reporter).await?;
+  game_options.java_path = runtime_manager.get_java_executable(component);
+
+  debug!("Java runtime installed");
 
   version_manager.download_required_files(&manifest, &reporter, Some(32), None).await?;
 

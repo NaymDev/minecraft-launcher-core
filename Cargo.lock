@@ -987,6 +987,7 @@ dependencies = [
  "hex",
  "libflate",
  "log",
+ "lzma-rs",
  "md-5",
  "os_info",
  "regex",

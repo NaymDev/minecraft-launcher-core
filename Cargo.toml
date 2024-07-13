@@ -4,10 +4,11 @@ version = "2.0.0"
 edition = "2021"
 
 [features]
-default = ["json", "bootstrap", "version_manager"]
+default = ["json", "bootstrap", "version_manager", "java_manager"]
 json = []
 bootstrap = []
 version_manager = []
+java_manager = ["version_manager", "dep:lzma-rs"]
 
 [dependencies]
 async-recursion = "1.0.5"
@@ -30,6 +31,7 @@ libflate = "2.0.0"
 derive_builder = "0.20.0"
 base64 = "0.22.1"
 md-5 = "0.10.6"
+lzma-rs = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
 simple_logger = { version = "5.0.0", features = ["colors"] }
