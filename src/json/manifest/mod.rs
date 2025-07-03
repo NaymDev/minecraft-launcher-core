@@ -51,7 +51,7 @@ pub struct VersionManifest {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub jar: Option<MCVersion>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub minimum_launcher_version: Option<u32>,
+  pub minimum_launcher_version: Option<f32>,
   pub release_time: Date,
   #[serde(rename = "time")]
   pub updated_time: Date,
