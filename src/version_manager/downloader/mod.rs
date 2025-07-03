@@ -44,7 +44,7 @@ impl ClientDownloader {
 
     if let Ok(mut file) = File::open(&index_file) {
       let sha1 = Sha1Sum::from_reader(&mut file).map_err(HashError::ChecksumFile)?;
-      if sha1 != index_info.sha1 {
+      if !index_info.sha1.contains(&sha1) {
         warn!("Asset index file is invalid, redownloading");
         fs::remove_file(&index_file).map_err(DownloadError::RemoveFile)?;
       }
@@ -62,9 +62,9 @@ impl ClientDownloader {
       sha1.update(&bytes);
       let actual = Sha1Sum::from(sha1);
 
-      if actual != index_info.sha1 {
+      if !index_info.sha1.contains(&actual) {
         let _ = fs::remove_file(&index_file);
-        return Err(DownloadError::ChecksumMismatch { expected: index_info.sha1.as_slice().to_vec(), actual: actual.into() });
+        return Err(DownloadError::ChecksumMismatch { expected: Vec::from(index_info.sha1.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(",")), actual: actual.into() });
       } else {
         Ok(serde_json::from_slice(&bytes).map_err(|err| DownloadError::Other(Box::new(err)))?)
       }

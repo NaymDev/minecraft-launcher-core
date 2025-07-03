@@ -7,8 +7,9 @@ use crate::json::Sha1Sum;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndexInfo {
+  #[serde(rename="name")]
   pub id: String,
-  pub sha1: Sha1Sum,
+  pub sha1: Vec<Sha1Sum>,
   pub size: i64,
   pub total_size: i64,
   pub url: String,

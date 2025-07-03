@@ -27,7 +27,7 @@ pub struct VersionManifest {
   pub arguments: HashMap<ArgumentType, Vec<Argument>>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub minecraft_arguments: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
+  #[serde(default, skip_serializing_if = "Option::is_none", rename = "libraries")]
   pub asset_index: Option<AssetIndexInfo>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub assets: Option<String>,
