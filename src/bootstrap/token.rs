@@ -4,13 +4,13 @@ use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct JwtPayload {
-    profiles: Profiles,
+    pub(crate) profiles: Profiles,
     pub(crate) pfd: Vec<Pfd>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Profiles {
-    mc: String,
+pub(crate) struct Profiles {
+    pub(crate) mc: String,
 }
 
 #[derive(Debug, Deserialize)]

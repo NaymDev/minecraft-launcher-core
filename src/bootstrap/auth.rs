@@ -27,7 +27,7 @@ impl UserAuthentication {
 
   pub async fn online(access_token: &str) -> Result<Self, UserAuthenticationError> {
     let parts: Vec<&str> = access_token.split('.').collect();
-    if parts.len() != 3 {
+    if parts.len() <= 1 {
       return Err(UserAuthenticationError::AuthenticationError("Invalid access token".to_string()));
     }
 
@@ -36,8 +36,7 @@ impl UserAuthentication {
     let payload_bytes = general_purpose::URL_SAFE_NO_PAD.decode(payload_encoded)
         .map_err(|_| UserAuthenticationError::AuthenticationError("Invalid payload".to_string()))?;
 
-    let payload: crate::bootstrap::token::JwtPayload = serde_json::from_slice(&payload_bytes)
-        .map_err(|_| UserAuthenticationError::AuthenticationError("Invalid payload".to_string()))?;
+    let payload: crate::bootstrap::token::JwtPayload = serde_json::from_slice(&payload_bytes)?;
 
     let mc_profile = payload.pfd.iter()
         .find(|p| p.profile_type == "mc")
