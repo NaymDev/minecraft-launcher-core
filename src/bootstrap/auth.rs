@@ -1,4 +1,5 @@
 use base64::{ engine::general_purpose::URL_SAFE, Engine };
+use base64::engine::general_purpose;
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -25,14 +26,32 @@ impl UserAuthentication {
   }
 
   pub async fn online(access_token: &str) -> Result<Self, UserAuthenticationError> {
-    let profile: ProfileResponse = Client::new().get(PROFILE_URL).bearer_auth(access_token).send().await?.error_for_status()?.json().await?;
+    let parts: Vec<&str> = access_token.split('.').collect();
+    if parts.len() != 3 {
+      return Err(UserAuthenticationError::AuthenticationError("Invalid access token".to_string()));
+    }
+
+    let payload_encoded = parts[1];
+
+    let payload_bytes = general_purpose::URL_SAFE_NO_PAD.decode(payload_encoded)
+        .map_err(|_| UserAuthenticationError::AuthenticationError("Invalid payload".to_string()))?;
+
+    let payload: crate::bootstrap::token::JwtPayload = serde_json::from_slice(&payload_bytes)
+        .map_err(|_| UserAuthenticationError::AuthenticationError("Invalid payload".to_string()))?;
+
+    let mc_profile = payload.pfd.iter()
+        .find(|p| p.profile_type == "mc")
+        .ok_or(UserAuthenticationError::AuthenticationError(
+          "Missing mc profile".to_string(),
+        ))?;
 
     Ok(Self {
       access_token: Some(access_token.to_string()),
-      username: profile.name,
-      uuid: Uuid::parse_str(&profile.id)?,
+      username: mc_profile.name.clone(),
+      uuid: Uuid::parse_str(&mc_profile.id)?,
     })
   }
+
 
   pub fn access_token(&self) -> &str {
     self.access_token.as_deref().unwrap_or("")

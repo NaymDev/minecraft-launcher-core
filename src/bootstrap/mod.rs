@@ -29,6 +29,8 @@ pub mod process;
 pub mod argument_substitutor;
 
 mod error;
+mod token;
+
 pub use error::{ Error, UnpackAssetsError, UnpackNativesError };
 
 const DEFAULT_JRE_ARGUMENTS_32BIT: &str =
